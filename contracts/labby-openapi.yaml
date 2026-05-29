@@ -1,0 +1,426 @@
+openapi: 3.1.0
+info:
+  title: Labby API Contract
+  version: 0.1.0
+  description: Contrato inicial da F1. Deve ser expandido antes de cada fase funcional.
+servers:
+  - url: https://api.labby.com.br
+  - url: http://localhost:8000
+paths:
+  /health:
+    get:
+      tags: [health]
+      summary: Root healthcheck
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v2/labby/health:
+    get:
+      tags: [health]
+      summary: Labby API healthcheck
+      responses:
+        "200":
+          description: Service status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /api/v2/labby/auth/login:
+    post:
+      tags: [auth]
+      summary: Login with default membership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v2/labby/auth/register:
+    post:
+      tags: [auth]
+      summary: Create user, tenant and owner membership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v2/labby/auth/refresh:
+    post:
+      tags: [auth]
+      summary: Rotate refresh token and issue a new access token
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v2/labby/auth/logout:
+    post:
+      tags: [auth]
+      summary: Revoke the current refresh session
+      responses:
+        "204":
+          description: Logged out
+  /api/v2/labby/auth/me:
+    get:
+      tags: [auth]
+      summary: Current user, active tenant and available memberships
+      responses:
+        "200":
+          description: Current identity
+  /api/v2/labby/auth/switch-tenant:
+    post:
+      tags: [auth]
+      summary: Switch active membership
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [membership_id]
+              properties:
+                membership_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v2/labby/auth/forgot-password:
+    post:
+      tags: [auth]
+      summary: Request password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        "204":
+          description: Reset requested
+  /api/v2/labby/auth/reset-password:
+    post:
+      tags: [auth]
+      summary: Complete password reset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, senha]
+              properties:
+                token:
+                  type: string
+                senha:
+                  type: string
+                  minLength: 8
+      responses:
+        "204":
+          description: Password reset
+  /api/v2/labby/modules/:
+    get:
+      tags: [modules]
+      summary: Current membership modules
+      responses:
+        "200":
+          description: Module list
+  /api/v2/labby/modules/users:
+    get:
+      tags: [modules]
+      summary: List tenant users and module access
+      responses:
+        "200":
+          description: User module list
+  /api/v2/labby/modules/users/{user_id}:
+    patch:
+      tags: [modules]
+      summary: Update user modules in the active tenant
+      parameters:
+        - name: user_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserModulesRequest"
+      responses:
+        "200":
+          description: Updated module access
+  /api/v2/labby/team/invites:
+    get:
+      tags: [team]
+      summary: List team invites
+      responses:
+        "200":
+          description: Invite list
+    post:
+      tags: [team]
+      summary: Create team invite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTeamInviteRequest"
+      responses:
+        "201":
+          description: Invite created
+  /api/v2/labby/team/invites/{invite_id}/resend:
+    post:
+      tags: [team]
+      summary: Resend invite
+      parameters:
+        - name: invite_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Invite resent
+  /api/v2/labby/team/invites/{invite_id}/revoke:
+    post:
+      tags: [team]
+      summary: Revoke invite
+      parameters:
+        - name: invite_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Invite revoked
+  /api/v2/labby/team/invites/accept/{token}:
+    get:
+      tags: [team]
+      summary: Preview public invite
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public invite
+    post:
+      tags: [team]
+      summary: Accept public invite
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [senha]
+              properties:
+                senha:
+                  type: string
+                  minLength: 8
+                nome:
+                  type: string
+      responses:
+        "200":
+          description: Auth response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v2/labby/contacts/:
+    get:
+      tags: [sales]
+      summary: Flat alias for sales contacts list
+      responses:
+        "200":
+          description: Contacts list
+    post:
+      tags: [sales]
+      summary: Flat alias for create contact
+      responses:
+        "201":
+          description: Contact created
+  /api/v2/labby/contacts/{contact_id}:
+    get:
+      tags: [sales]
+      summary: Flat alias for contact detail
+      parameters:
+        - name: contact_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Contact detail
+    put:
+      tags: [sales]
+      summary: Flat alias for update contact
+      parameters:
+        - name: contact_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Contact updated
+    delete:
+      tags: [sales]
+      summary: Flat alias for delete contact
+      parameters:
+        - name: contact_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Contact deleted
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, environment]
+      properties:
+        status:
+          type: string
+        service:
+          type: string
+        environment:
+          type: string
+    LabbyModule:
+      type: object
+      required: [key, label, description, accent, accent_bright]
+      properties:
+        key:
+          type: string
+          enum: [sales, social_media]
+        label:
+          type: string
+        description:
+          type: string
+        accent:
+          type: string
+        accent_bright:
+          type: string
+    LoginRequest:
+      type: object
+      required: [email, senha]
+      properties:
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+    RegisterRequest:
+      type: object
+      required: [nome, email, senha, empresa]
+      properties:
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        senha:
+          type: string
+          minLength: 8
+        empresa:
+          type: string
+        telefone:
+          type: string
+    AuthResponse:
+      type: object
+      required: [access_token, token_type, user, tenant]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [bearer]
+        user:
+          type: object
+        tenant:
+          type: object
+    UpdateUserModulesRequest:
+      type: object
+      required: [module_keys]
+      properties:
+        module_keys:
+          type: array
+          items:
+            type: string
+            enum: [sales, social_media]
+        default_module:
+          type: string
+          enum: [sales, social_media]
+        expected_updated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    CreateTeamInviteRequest:
+      type: object
+      required: [nome, email, role, module_keys]
+      properties:
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [admin, agent, viewer]
+        module_keys:
+          type: array
+          items:
+            type: string
+            enum: [sales, social_media]
+        default_module:
+          type: string
+          enum: [sales, social_media]
+

@@ -1,0 +1,2 @@
+"""Labby backend package."""
+
