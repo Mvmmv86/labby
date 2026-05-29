@@ -6,3 +6,11 @@ class HealthResponse(BaseModel):
     service: str
     environment: str
 
+
+class DependencyHealth(BaseModel):
+    ok: bool
+    error: str | None = None
+
+
+class ReadinessResponse(HealthResponse):
+    dependencies: dict[str, DependencyHealth]

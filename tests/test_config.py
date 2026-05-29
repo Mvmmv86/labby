@@ -1,0 +1,31 @@
+import pytest
+from pydantic import ValidationError
+
+from app.core.config import DEFAULT_JWT_SECRET, Settings
+
+
+def test_development_allows_local_defaults() -> None:
+    settings = Settings()
+    assert settings.environment == "development"
+    assert settings.jwt_secret == DEFAULT_JWT_SECRET
+
+
+def test_production_rejects_default_jwt_secret() -> None:
+    with pytest.raises(ValidationError, match="LABBY_JWT_SECRET"):
+        Settings(
+            environment="production",
+            database_url="postgresql+psycopg://labby:secret@db.example.com:5432/labby",
+            redis_url="redis://redis.example.com:6379/0",
+            jwt_secret=DEFAULT_JWT_SECRET,
+        )
+
+
+def test_staging_rejects_localhost_dependencies() -> None:
+    with pytest.raises(ValidationError, match="LABBY_DATABASE_URL"):
+        Settings(
+            environment="staging",
+            database_url="postgresql+psycopg://labby:labby@localhost:5432/labby",
+            redis_url="redis://localhost:6379/0",
+            jwt_secret="x" * 32,
+        )
+

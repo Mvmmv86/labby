@@ -62,15 +62,40 @@ python -m compileall app tests
 python -m pytest -q
 ```
 
-Resultado esperado no ultimo run: `4 passed`.
+Resultado esperado no ultimo run: `11 passed`.
 
-Nao rodado localmente:
+Rodado apos review:
 
 ```powershell
 python -m ruff check .
+alembic upgrade head --sql
 ```
 
-Motivo: `ruff` nao esta instalado no Python global local. Ele esta declarado em `pyproject.toml` em `.[dev]` e no CI.
+Resultado: Ruff limpo e SQL offline gerado com sucesso.
+
+Tentado:
+
+```powershell
+docker build -t labby-backend:f1 .
+```
+
+Resultado: nao executou porque o Docker Desktop daemon nao estava ativo
+(`dockerDesktopLinuxEngine` indisponivel). O Dockerfile foi ajustado para instalar
+o pacote depois de copiar o codigo.
+
+## Fixes apos review Claude
+
+Review externo: `docs/plans/2026-05-29-labby-f1-review.md` no repo OmniiaPro.
+
+Correcoes aplicadas:
+
+- B1: corrigido `ruff I001` na migration.
+- H1: `Settings` agora faz fail-fast em `production/staging` quando `LABBY_JWT_SECRET` usa o default ou tem menos de 32 chars; tambem bloqueia DB/Redis localhost fora de dev.
+- H2: adicionado `/healthz` e `/api/v2/labby/healthz` tocando DB e Redis, retornando 503 quando dependencia falha.
+- H3: adicionado Celery smoke task `labby.smoke.ping` com teste em eager mode.
+- H4: migration alinhada com models para `nullable=False` e `server_default` em timestamps e defaults de banco.
+- M3: `.env.example` documenta issuer, audience, expiração de tokens e timezone.
+- M4: Dockerfile ajustado para instalar o pacote depois de copiar o codigo.
 
 ## Pontos para review adversarial
 
@@ -79,4 +104,3 @@ Motivo: `ruff` nao esta instalado no Python global local. Ele esta declarado em 
 3. O contrato inicial OpenAPI esta suficiente para F1 ou deve ficar ainda mais completo antes da F2?
 4. Devemos criar tabela de refresh/session ja na F1 ou deixar para F2 Auth?
 5. O uso de `membership_id` como ator humano padrao esta consistente com a futura migracao dos dominios `of_*`?
-

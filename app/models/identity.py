@@ -1,7 +1,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text, UniqueConstraint, func
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,7 +27,7 @@ class User(Base):
     )
     senha_hash: Mapped[str] = mapped_column(Text, nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    ativo: Mapped[bool] = mapped_column(default=True, nullable=False)
+    ativo: Mapped[bool] = mapped_column(default=True, server_default=text("true"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -35,8 +44,10 @@ class Tenant(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nome: Mapped[str] = mapped_column(String(180), nullable=False)
     slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
-    plano: Mapped[str] = mapped_column(String(40), nullable=False, default="trial")
-    ativo: Mapped[bool] = mapped_column(default=True, nullable=False)
+    plano: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="trial", server_default="trial"
+    )
+    ativo: Mapped[bool] = mapped_column(default=True, server_default=text("true"), nullable=False)
     config: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="'{}'::jsonb")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -74,8 +85,12 @@ class Membership(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(20), nullable=False)
-    default_module: Mapped[str] = mapped_column(String(40), nullable=False, default="sales")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")
+    default_module: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="sales", server_default="sales"
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", server_default="active"
+    )
     last_access_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -150,14 +165,16 @@ class TeamInvite(Base):
         JSONB, nullable=False, server_default="'[]'::jsonb"
     )
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="pending", server_default="pending"
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     accepted_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
     )
     accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    resend_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    resend_count: Mapped[int] = mapped_column(default=0, server_default=text("0"), nullable=False)
     last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

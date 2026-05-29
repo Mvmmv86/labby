@@ -18,6 +18,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /healthz:
+    get:
+      tags: [health]
+      summary: Root readiness check touching DB and Redis
+      responses:
+        "200":
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more dependencies are unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
   /api/v2/labby/health:
     get:
       tags: [health]
@@ -29,6 +46,23 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+  /api/v2/labby/healthz:
+    get:
+      tags: [health]
+      summary: Labby API readiness check touching DB and Redis
+      responses:
+        "200":
+          description: Dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: One or more dependencies are unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
   /api/v2/labby/auth/login:
     post:
       tags: [auth]
@@ -333,6 +367,26 @@ components:
           type: string
         environment:
           type: string
+    DependencyHealth:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+        error:
+          type:
+            - string
+            - "null"
+    ReadinessResponse:
+      allOf:
+        - $ref: "#/components/schemas/HealthResponse"
+        - type: object
+          required: [dependencies]
+          properties:
+            dependencies:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/DependencyHealth"
     LabbyModule:
       type: object
       required: [key, label, description, accent, accent_bright]
@@ -423,4 +477,3 @@ components:
         default_module:
           type: string
           enum: [sales, social_media]
-

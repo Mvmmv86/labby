@@ -20,3 +20,4 @@ celery_app.conf.update(
     beat_schedule={},
 )
 
+celery_app.autodiscover_tasks(["app.jobs"])

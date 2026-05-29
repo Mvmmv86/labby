@@ -1,7 +1,8 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Response, status
 
 from app.core.config import get_settings
-from app.schemas.health import HealthResponse
+from app.core.health import readiness_status
+from app.schemas.health import HealthResponse, ReadinessResponse
 
 router = APIRouter(tags=["health"])
 
@@ -15,3 +16,19 @@ def health() -> HealthResponse:
         environment=settings.environment,
     )
 
+
+@router.get("/healthz", response_model=ReadinessResponse)
+def readiness(response: Response) -> ReadinessResponse:
+    settings = get_settings()
+    ok, dependencies = readiness_status()
+    if not ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return ReadinessResponse(
+        status="ok" if ok else "degraded",
+        service="labby-backend",
+        environment=settings.environment,
+        dependencies={
+            name: dependency.as_dict()
+            for name, dependency in dependencies.items()
+        },
+    )

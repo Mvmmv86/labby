@@ -6,8 +6,8 @@ Create Date: 2026-05-29
 """
 from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "001_identity_foundation"
@@ -24,9 +24,19 @@ def upgrade() -> None:
         sa.Column("email_normalized", sa.String(length=320), nullable=False),
         sa.Column("senha_hash", sa.Text(), nullable=False),
         sa.Column("email_verified_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("ativo", sa.Boolean(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
+        sa.Column("ativo", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("email_normalized", name="uq_users_email_normalized"),
     )
@@ -37,16 +47,26 @@ def upgrade() -> None:
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("nome", sa.String(length=180), nullable=False),
         sa.Column("slug", sa.String(length=120), nullable=False),
-        sa.Column("plano", sa.String(length=40), nullable=False),
-        sa.Column("ativo", sa.Boolean(), nullable=False),
+        sa.Column("plano", sa.String(length=40), server_default="trial", nullable=False),
+        sa.Column("ativo", sa.Boolean(), server_default=sa.text("true"), nullable=False),
         sa.Column(
             "config",
             postgresql.JSONB(astext_type=sa.Text()),
             server_default=sa.text("'{}'::jsonb"),
             nullable=False,
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("slug", name="uq_tenants_slug"),
     )
@@ -58,11 +78,21 @@ def upgrade() -> None:
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("role", sa.String(length=20), nullable=False),
-        sa.Column("default_module", sa.String(length=40), nullable=False),
-        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("default_module", sa.String(length=40), server_default="sales", nullable=False),
+        sa.Column("status", sa.String(length=20), server_default="active", nullable=False),
         sa.Column("last_access_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "role IN ('owner', 'admin', 'agent', 'viewer')",
             name="ck_memberships_role",
@@ -88,7 +118,12 @@ def upgrade() -> None:
         sa.Column("membership_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("module_key", sa.String(length=40), nullable=False),
         sa.Column("granted_by_membership_id", postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column("granted_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
+        sa.Column(
+            "granted_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "module_key IN ('sales', 'social_media')",
             name="ck_membership_modules_module_key",
@@ -116,15 +151,25 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("token_hash", sa.String(length=128), nullable=False),
-        sa.Column("status", sa.String(length=20), nullable=False),
+        sa.Column("status", sa.String(length=20), server_default="pending", nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("accepted_by_membership_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("accepted_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("resend_count", sa.Integer(), nullable=False),
+        sa.Column("resend_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("last_sent_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.CheckConstraint(
             "role IN ('admin', 'agent', 'viewer')",
             name="ck_team_invites_role",

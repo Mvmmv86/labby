@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v2.labby.router import router as labby_router
 from app.core.config import get_settings
+from app.core.health import readiness_status
 
 
 def create_app() -> FastAPI:
@@ -35,9 +36,23 @@ def create_app() -> FastAPI:
             "environment": settings.environment,
         }
 
+    @app.get("/healthz", tags=["health"])
+    def readiness_health(response: Response) -> dict[str, object]:
+        ok, dependencies = readiness_status()
+        if not ok:
+            response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "ok" if ok else "degraded",
+            "service": "labby-backend",
+            "environment": settings.environment,
+            "dependencies": {
+                name: dependency.as_dict()
+                for name, dependency in dependencies.items()
+            },
+        }
+
     app.include_router(labby_router, prefix="/api/v2/labby")
     return app
 
 
 app = create_app()
-

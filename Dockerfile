@@ -5,10 +5,7 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY pyproject.toml /app/
+COPY . /app
 RUN pip install --no-cache-dir -e .
 
-COPY . /app
-
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
