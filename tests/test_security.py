@@ -1,4 +1,10 @@
-from app.core.security import create_access_token, decode_access_token, make_opaque_token
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    make_opaque_token,
+    verify_password,
+)
 
 
 def test_access_token_round_trip_contains_labby_claims() -> None:
@@ -21,3 +27,12 @@ def test_access_token_round_trip_contains_labby_claims() -> None:
 
 def test_opaque_tokens_are_unique() -> None:
     assert make_opaque_token() != make_opaque_token()
+
+
+def test_password_hash_round_trip_handles_long_passwords() -> None:
+    password = "a" * 128
+
+    password_hash = hash_password(password)
+
+    assert verify_password(password, password_hash)
+    assert not verify_password("wrong", password_hash)

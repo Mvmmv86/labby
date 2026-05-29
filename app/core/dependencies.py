@@ -55,10 +55,12 @@ def get_current_membership(
               ) AS modules
             FROM memberships m
             JOIN users u ON u.id = m.user_id
+            JOIN tenants t ON t.id = m.tenant_id
             LEFT JOIN membership_modules mm ON mm.membership_id = m.id
             WHERE m.id = :membership_id
               AND m.status = 'active'
               AND u.ativo = true
+              AND t.ativo = true
             GROUP BY m.id, u.id
             """
         ),

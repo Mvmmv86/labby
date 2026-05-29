@@ -105,12 +105,14 @@ def me(
 def switch_tenant(
     data: SwitchTenantRequest,
     response: Response,
+    refresh_cookie: str | None = Cookie(default=None, alias=REFRESH_COOKIE_NAME),
     current: CurrentMembership = Depends(get_current_membership),
     service: AuthService = Depends(get_auth_service),
 ) -> AuthResponse:
     auth_response, refresh_token = service.switch_tenant(
         user_id=str(current.user_id),
         membership_id=data.membership_id,
+        current_refresh_token=refresh_cookie,
     )
     set_refresh_cookie(response, refresh_token)
     return auth_response

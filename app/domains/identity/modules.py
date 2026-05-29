@@ -26,6 +26,8 @@ class ModuleAccess:
     default_module: str
 
     def validate(self) -> None:
+        if not self.modules:
+            raise ValueError("Pelo menos um modulo precisa estar habilitado")
         invalid = set(self.modules) - set(LABBY_MODULES)
         if invalid:
             raise ValueError(f"Modulos invalidos: {', '.join(sorted(invalid))}")

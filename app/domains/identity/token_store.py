@@ -45,6 +45,8 @@ class RefreshTokenStore:
         )
         self.redis.setex(self._token_key(token), self.ttl_seconds, json.dumps(asdict(record)))
         self.redis.setex(self._family_key(family), self.ttl_seconds, "active")
+        self.redis.sadd(self._user_families_key(user_id), family)
+        self.redis.expire(self._user_families_key(user_id), self.ttl_seconds)
         return token
 
     def rotate(self, token: str) -> tuple[RefreshTokenRecord, str]:
@@ -98,6 +100,8 @@ class RefreshTokenStore:
                         json.dumps(asdict(active)),
                     )
                     pipe.setex(family_key, self.ttl_seconds, "active")
+                    pipe.sadd(self._user_families_key(record.user_id), record.family_id)
+                    pipe.expire(self._user_families_key(record.user_id), self.ttl_seconds)
                     pipe.execute()
                     return record, new_token
                 except WatchError:
@@ -126,6 +130,18 @@ class RefreshTokenStore:
     def revoke_family(self, family_id: str) -> None:
         self.redis.setex(self._family_key(family_id), self.ttl_seconds, "revoked")
 
+    def revoke_user(self, user_id: str) -> None:
+        families_key = self._user_families_key(user_id)
+        family_ids = self.redis.smembers(families_key)
+        if not family_ids:
+            return
+
+        with self.redis.pipeline() as pipe:
+            for family_id in family_ids:
+                pipe.setex(self._family_key(str(family_id)), self.ttl_seconds, "revoked")
+            pipe.delete(families_key)
+            pipe.execute()
+
     @staticmethod
     def _token_key(token: str) -> str:
         return f"refresh:{hash_token(token)}"
@@ -133,6 +149,10 @@ class RefreshTokenStore:
     @staticmethod
     def _family_key(family_id: str) -> str:
         return f"refresh-family:{family_id}"
+
+    @staticmethod
+    def _user_families_key(user_id: str) -> str:
+        return f"refresh-user:{user_id}:families"
 
 
 @dataclass(frozen=True)

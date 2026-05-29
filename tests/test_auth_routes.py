@@ -18,6 +18,7 @@ from app.schemas.auth import (
 class FakeAuthService:
     def __init__(self) -> None:
         self.logout_token: str | None = None
+        self.switch_refresh_token: str | None = None
         self.reset_payload: tuple[str, str] | None = None
         self.forgot_email: str | None = None
 
@@ -52,9 +53,16 @@ class FakeAuthService:
             ],
         )
 
-    def switch_tenant(self, *, user_id: str, membership_id: str):
+    def switch_tenant(
+        self,
+        *,
+        user_id: str,
+        membership_id: str,
+        current_refresh_token: str | None = None,
+    ):
         assert user_id == "11111111-1111-1111-1111-111111111111"
         assert membership_id == "44444444-4444-4444-4444-444444444444"
+        self.switch_refresh_token = current_refresh_token
         return make_auth_response(access_token="switched"), "refresh-switch"
 
     def forgot_password(self, *, email: str):
@@ -171,7 +179,9 @@ def test_me_returns_active_membership_context() -> None:
 
 
 def test_switch_tenant_sets_new_refresh_cookie() -> None:
-    client, _ = make_client()
+    service = FakeAuthService()
+    client, _ = make_client(service)
+    client.cookies.set(REFRESH_COOKIE_NAME, "old-switch-refresh")
 
     response = client.post(
         "/api/v2/labby/auth/switch-tenant",
@@ -181,6 +191,7 @@ def test_switch_tenant_sets_new_refresh_cookie() -> None:
     assert response.status_code == 200
     assert response.json()["access_token"] == "switched"
     assert "refresh-switch" in response.headers["set-cookie"]
+    assert service.switch_refresh_token == "old-switch-refresh"
 
 
 def test_forgot_and_reset_password_contracts() -> None:

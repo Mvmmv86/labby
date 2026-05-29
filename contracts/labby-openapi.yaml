@@ -188,6 +188,10 @@ paths:
       responses:
         "200":
           description: Module list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentModulesResponse"
   /api/v2/labby/modules/users:
     get:
       tags: [modules]
@@ -195,6 +199,10 @@ paths:
       responses:
         "200":
           description: User module list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserModulesResponse"
   /api/v2/labby/modules/users/{user_id}:
     patch:
       tags: [modules]
@@ -215,6 +223,10 @@ paths:
       responses:
         "200":
           description: Updated module access
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateUserModulesResponse"
   /api/v2/labby/team/invites:
     get:
       tags: [team]
@@ -222,6 +234,10 @@ paths:
       responses:
         "200":
           description: Invite list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TeamInvitesResponse"
     post:
       tags: [team]
       summary: Create team invite
@@ -234,6 +250,10 @@ paths:
       responses:
         "201":
           description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteMutationResponse"
   /api/v2/labby/team/invites/{invite_id}/resend:
     post:
       tags: [team]
@@ -248,6 +268,10 @@ paths:
       responses:
         "200":
           description: Invite resent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteMutationResponse"
   /api/v2/labby/team/invites/{invite_id}/revoke:
     post:
       tags: [team]
@@ -262,6 +286,14 @@ paths:
       responses:
         "200":
           description: Invite revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [invite]
+                properties:
+                  invite:
+                    $ref: "#/components/schemas/LabbyTeamInvite"
   /api/v2/labby/team/invites/accept/{token}:
     get:
       tags: [team]
@@ -275,6 +307,10 @@ paths:
       responses:
         "200":
           description: Public invite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicTeamInvite"
     post:
       tags: [team]
       summary: Accept public invite
@@ -289,14 +325,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [senha]
-              properties:
-                senha:
-                  type: string
-                  minLength: 8
-                nome:
-                  type: string
+              $ref: "#/components/schemas/AcceptTeamInviteRequest"
       responses:
         "200":
           description: Auth response
@@ -549,6 +578,72 @@ components:
         senha:
           type: string
           minLength: 8
+    CurrentModulesResponse:
+      type: object
+      required: [modules, default_module]
+      properties:
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+        default_module:
+          type: string
+          enum: [sales, social_media]
+    LabbyUserModule:
+      type: object
+      required: [id, nome, email, role, ativo, default_module, updated_at, modules]
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        role:
+          type: string
+          enum: [owner, admin, agent, viewer]
+        ativo:
+          type: boolean
+        default_module:
+          type: string
+          enum: [sales, social_media]
+        updated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+    UserModulesStats:
+      type: object
+      required: [total, sales, social_media]
+      properties:
+        total:
+          type: integer
+        sales:
+          type: integer
+        social_media:
+          type: integer
+    UserModulesResponse:
+      type: object
+      required: [users, total, limit, offset, stats]
+      properties:
+        users:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyUserModule"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+        stats:
+          $ref: "#/components/schemas/UserModulesStats"
     UpdateUserModulesRequest:
       type: object
       required: [module_keys]
@@ -562,6 +657,25 @@ components:
           type: string
           enum: [sales, social_media]
         expected_updated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    UpdateUserModulesResponse:
+      type: object
+      required: [user_id, modules, default_module, updated_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+        default_module:
+          type: string
+          enum: [sales, social_media]
+        updated_at:
           type:
             - string
             - "null"
@@ -586,3 +700,159 @@ components:
         default_module:
           type: string
           enum: [sales, social_media]
+    LabbyTeamInvite:
+      type: object
+      required:
+        - id
+        - tenant_id
+        - email
+        - nome
+        - role
+        - default_module
+        - status
+        - expires_at
+        - last_sent_at
+        - resend_count
+        - invited_by_id
+        - accepted_at
+        - revoked_at
+        - created_at
+        - updated_at
+        - modules
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        nome:
+          type: string
+        role:
+          type: string
+          enum: [admin, agent, viewer]
+        default_module:
+          type: string
+          enum: [sales, social_media]
+        status:
+          type: string
+          enum: [pending, accepted, revoked, expired]
+        expires_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        last_sent_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        resend_count:
+          type: integer
+        invited_by_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        invited_by_nome:
+          type:
+            - string
+            - "null"
+        accepted_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        revoked_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        created_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        updated_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+    TeamInvitesResponse:
+      type: object
+      required: [invites, total, limit, offset]
+      properties:
+        invites:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyTeamInvite"
+        total:
+          type: integer
+        limit:
+          type: integer
+        offset:
+          type: integer
+    InviteMutationResponse:
+      type: object
+      required: [invite, email_sent]
+      properties:
+        invite:
+          $ref: "#/components/schemas/LabbyTeamInvite"
+        email_sent:
+          type: boolean
+        email_error:
+          type:
+            - string
+            - "null"
+    PublicTeamInvite:
+      type: object
+      required: [id, tenant, email, nome, role, default_module, expires_at, modules]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant:
+          type: object
+          required: [id, nome]
+          properties:
+            id:
+              type: string
+              format: uuid
+            nome:
+              type: string
+        email:
+          type: string
+          format: email
+        nome:
+          type: string
+        role:
+          type: string
+          enum: [admin, agent, viewer]
+        default_module:
+          type: string
+          enum: [sales, social_media]
+        expires_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+    AcceptTeamInviteRequest:
+      type: object
+      required: [senha]
+      properties:
+        senha:
+          type: string
+          minLength: 8
+        nome:
+          type: string

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     jwt_audience: str = "labby-app"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
+    app_base_url: str = "https://app.labby.com.br"
+    email_from: str = "Labby <convites@labby.com.br>"
+    resend_api_key: str | None = None
     allowed_origins: str = (
         "http://localhost:3000,http://localhost:3001,https://app.labby.com.br"
     )

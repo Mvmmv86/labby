@@ -28,6 +28,8 @@ from app.schemas.auth import (
     UserResponse,
 )
 
+DUMMY_PASSWORD_HASH = "$2b$12$O6tiWjU/E9DC558mqqEdgO7moENkt0KYbwvJ1ptNek2k.uMa6GRRu"
+
 
 @dataclass(frozen=True)
 class AuthContext:
@@ -158,7 +160,10 @@ class AuthService:
             {"email": email_normalized},
         ).mappings().first()
 
-        if not user or not user["ativo"] or not verify_password(senha, user["senha_hash"]):
+        password_hash = user["senha_hash"] if user else DUMMY_PASSWORD_HASH
+        password_valid = verify_password(senha, password_hash)
+
+        if not user or not user["ativo"] or not password_valid:
             raise HTTPException(status_code=401, detail="Email ou senha incorretos")
 
         context = self._default_context_for_user(str(user["id"]))
@@ -195,7 +200,16 @@ class AuthService:
         if refresh_token:
             self.refresh_store.revoke(refresh_token)
 
-    def switch_tenant(self, *, user_id: str, membership_id: str) -> tuple[AuthResponse, str]:
+    def issue_for_membership(self, membership_id: str) -> tuple[AuthResponse, str]:
+        return self._auth_response(self._context_for_membership(membership_id))
+
+    def switch_tenant(
+        self,
+        *,
+        user_id: str,
+        membership_id: str,
+        current_refresh_token: str | None = None,
+    ) -> tuple[AuthResponse, str]:
         context = self._context_for_membership(membership_id)
         if context.user_id != user_id:
             raise HTTPException(status_code=403, detail="Membership nao pertence ao usuario")
@@ -204,7 +218,10 @@ class AuthService:
             {"membership_id": membership_id},
         )
         self.db.commit()
-        return self._auth_response(context)
+        auth_response = self._auth_response(context)
+        if current_refresh_token:
+            self.refresh_store.revoke(current_refresh_token)
+        return auth_response
 
     def forgot_password(self, *, email: str) -> str | None:
         email_normalized = normalize_email(email)
@@ -231,6 +248,7 @@ class AuthService:
             {"senha_hash": hash_password(senha), "user_id": record.user_id},
         )
         self.db.commit()
+        self.refresh_store.revoke_user(record.user_id)
 
     def _auth_response(self, context: AuthContext) -> tuple[AuthResponse, str]:
         response = self._access_response(context)

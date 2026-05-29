@@ -16,3 +16,9 @@ def test_module_access_requires_default_module_to_be_enabled() -> None:
     access = ModuleAccess(modules=("sales",), default_module="social_media")
     with pytest.raises(ValueError, match="Modulo padrao"):
         access.validate()
+
+
+def test_module_access_requires_at_least_one_module() -> None:
+    access = ModuleAccess(modules=(), default_module="sales")
+    with pytest.raises(ValueError, match="Pelo menos um modulo"):
+        access.validate()
