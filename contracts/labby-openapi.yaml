@@ -101,6 +101,12 @@ paths:
     post:
       tags: [auth]
       summary: Rotate refresh token and issue a new access token
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
       responses:
         "200":
           description: Auth response
@@ -112,6 +118,12 @@ paths:
     post:
       tags: [auth]
       summary: Revoke the current refresh session
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
       responses:
         "204":
           description: Logged out
@@ -122,6 +134,10 @@ paths:
       responses:
         "200":
           description: Current identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
   /api/v2/labby/auth/switch-tenant:
     post:
       tags: [auth]
@@ -131,12 +147,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [membership_id]
-              properties:
-                membership_id:
-                  type: string
-                  format: uuid
+              $ref: "#/components/schemas/SwitchTenantRequest"
       responses:
         "200":
           description: Auth response
@@ -153,12 +164,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [email]
-              properties:
-                email:
-                  type: string
-                  format: email
+              $ref: "#/components/schemas/ForgotPasswordRequest"
       responses:
         "204":
           description: Reset requested
@@ -171,14 +177,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [token, senha]
-              properties:
-                token:
-                  type: string
-                senha:
-                  type: string
-                  minLength: 8
+              $ref: "#/components/schemas/ResetPasswordRequest"
       responses:
         "204":
           description: Password reset
@@ -437,9 +436,119 @@ components:
           type: string
           enum: [bearer]
         user:
-          type: object
+          $ref: "#/components/schemas/UserResponse"
         tenant:
-          type: object
+          $ref: "#/components/schemas/TenantResponse"
+    UserResponse:
+      type: object
+      required: [id, tenant_id, nome, email, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+        email:
+          type: string
+          format: email
+        avatar_url:
+          type:
+            - string
+            - "null"
+        role:
+          type: string
+          enum: [owner, admin, agent, viewer]
+    TenantResponse:
+      type: object
+      required: [id, nome, slug, plano, ativo, modules, default_module]
+      properties:
+        id:
+          type: string
+          format: uuid
+        nome:
+          type: string
+        slug:
+          type: string
+        plano:
+          type: string
+        ativo:
+          type: boolean
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+        default_module:
+          type: string
+          enum: [sales, social_media]
+    MembershipResponse:
+      type: object
+      required: [id, tenant_id, tenant_nome, tenant_slug, role, modules, default_module]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        tenant_nome:
+          type: string
+        tenant_slug:
+          type: string
+        role:
+          type: string
+          enum: [owner, admin, agent, viewer]
+        modules:
+          type: array
+          items:
+            $ref: "#/components/schemas/LabbyModule"
+        default_module:
+          type: string
+          enum: [sales, social_media]
+    MeResponse:
+      type: object
+      required: [user, tenant, memberships]
+      properties:
+        user:
+          $ref: "#/components/schemas/UserResponse"
+        tenant:
+          $ref: "#/components/schemas/TenantResponse"
+        memberships:
+          type: array
+          items:
+            $ref: "#/components/schemas/MembershipResponse"
+    RefreshRequest:
+      type: object
+      properties:
+        refresh_token:
+          type:
+            - string
+            - "null"
+    SwitchTenantRequest:
+      type: object
+      required: [membership_id]
+      properties:
+        membership_id:
+          type: string
+          format: uuid
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+    ResetPasswordRequest:
+      type: object
+      required: [token, senha]
+      properties:
+        token:
+          type: string
+        senha:
+          type: string
+          minLength: 8
     UpdateUserModulesRequest:
       type: object
       required: [module_keys]

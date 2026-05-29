@@ -1,3 +1,5 @@
+import hashlib
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -15,6 +17,14 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return pwd_context.verify(password, password_hash)
+
+
+def make_opaque_token() -> str:
+    return secrets.token_urlsafe(48)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_access_token(
@@ -63,4 +73,3 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
     if payload.get("type") != "labby_access":
         return None
     return payload
-
