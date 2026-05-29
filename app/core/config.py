@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     environment: str = "development"
     database_url: str = "postgresql+psycopg://labby:labby@localhost:5432/labby"
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout_seconds: int = 30
+    database_pool_recycle_seconds: int = 1800
     redis_url: str = "redis://localhost:6379/0"
     jwt_secret: str = Field(default=DEFAULT_JWT_SECRET, min_length=16)
     jwt_issuer: str = "labby-api"
