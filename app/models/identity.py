@@ -86,7 +86,10 @@ class Membership(Base):
 
     user: Mapped[User] = relationship(back_populates="memberships")
     tenant: Mapped[Tenant] = relationship(back_populates="memberships")
-    modules: Mapped[list["MembershipModule"]] = relationship(back_populates="membership")
+    modules: Mapped[list["MembershipModule"]] = relationship(
+        back_populates="membership",
+        foreign_keys="MembershipModule.membership_id",
+    )
 
 
 class MembershipModule(Base):
