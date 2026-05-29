@@ -4,11 +4,14 @@ Backend proprio da Labby.
 
 Este repositorio nasce separado do OmniiaPro para evitar acoplamento entre os produtos. O contrato publico alvo e `/api/v2/labby/*`.
 
-## Branch atual
+## Estado atual
 
-`feature/f1-bootstrap`
+Branch local: `feature/f3-team-invites-modules`
 
-## F1 - Bootstrap
+Backend Python/FastAPI proprio da Labby, sem Docker como requisito de desenvolvimento
+ou deploy.
+
+## Fases entregues
 
 Escopo desta fase:
 
@@ -16,9 +19,10 @@ Escopo desta fase:
 - Configuracao `LABBY_*`.
 - SQLAlchemy e Alembic.
 - Celery + Redis.
-- Docker para API, worker, beat, Postgres e Redis.
 - Contrato OpenAPI inicial em `contracts/labby-openapi.yaml`.
 - Modelo base de identidade: `users`, `tenants`, `memberships`, `membership_modules`, `team_invites`.
+- Auth/memberships com JWT proprio, refresh token opaco e switch tenant.
+- Convites de equipe e permissoes por modulo.
 
 Fora de escopo nesta fase:
 
@@ -43,6 +47,21 @@ Healthcheck:
 Invoke-WebRequest http://localhost:8000/health
 ```
 
+Worker local, quando precisar processar jobs:
+
+```powershell
+celery -A app.core.celery_app.celery_app worker --loglevel=info
+```
+
+Beat local, quando precisar agendar jobs:
+
+```powershell
+celery -A app.core.celery_app.celery_app beat --loglevel=info
+```
+
+Postgres e Redis devem ser servicos gerenciados ou instalados localmente. O projeto
+nao depende de Docker.
+
 ## Decisoes base
 
 - Auth proprio da Labby.
@@ -50,4 +69,3 @@ Invoke-WebRequest http://localhost:8000/health
 - Modulos: `sales` e `social_media`.
 - FKs operacionais de atores humanos devem apontar para `membership_id`.
 - Widget publico canonico: `https://api.labby.com.br/widget/{widget_id}/loader.js`.
-
