@@ -3,6 +3,7 @@
 Data: 2026-06-01
 Branch local: `feature/f3-team-invites-modules`
 Repo local: `C:\Users\marcu\labby-backend`
+Repo GitHub: `git@github.com:Mvmmv86/labby.git`
 
 ## Objetivo
 
@@ -27,6 +28,7 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 Commits locais relevantes:
 
 - `6fd4760 docs: add revised Labby separation action plan`
+- `79c9422 feat: add jobs outbox foundation`
 - `1065034 chore: add scalability database foundation`
 - `a897d73 chore: remove Docker from Labby backend flow`
 - `85c8aa0 feat: add team invites and module permissions`
@@ -35,7 +37,11 @@ Commits locais relevantes:
 - `ebc4151 chore: add identity foundation migration`
 - `1ef7a74 chore: bootstrap Labby backend`
 
-Ainda nao existe remote GitHub configurado. O repo sera criado no GitHub depois.
+Remote GitHub configurado em `git@github.com:Mvmmv86/labby.git`.
+Branches publicadas:
+
+- `main`
+- `feature/f3-team-invites-modules`
 
 ## O que ja foi entregue
 
@@ -193,13 +199,17 @@ para Facebook, Instagram, YouTube e LinkedIn entra depois do cutover.
 
 ### G0 - Repo e governanca imediata
 
-Status: pendente por decisao operacional.
+Status: parcialmente feito.
+
+Feito:
+
+- Criar repo GitHub `Mvmmv86/labby`.
+- Configurar `origin` via SSH.
+- Fazer push da branch atual.
+- Criar/publicar branch principal `main`.
 
 Falta:
 
-- Criar repo GitHub `labby-backend`.
-- Configurar `origin`.
-- Fazer push da branch atual.
 - Ativar CI no GitHub.
 - Proteger branch principal.
 - Documentar secrets de producao.
