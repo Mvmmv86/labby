@@ -382,6 +382,420 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/contacts/:
+    get:
+      tags:
+      - sales-contacts
+      summary: List Contacts
+      operationId: list_contacts_api_v2_labby_contacts__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: grupo
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+      - name: tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tag
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-contacts
+      summary: Create Contact
+      operationId: create_contact_api_v2_labby_contacts__post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/contacts/:
+    get:
+      tags:
+      - sales-contacts
+      summary: List Contacts
+      operationId: list_contacts_api_v2_labby_sales_contacts__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: grupo
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+      - name: tag
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tag
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-contacts
+      summary: Create Contact
+      operationId: create_contact_api_v2_labby_sales_contacts__post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/contacts/batch:
+    post:
+      tags:
+      - sales-contacts
+      summary: Batch Import Contacts
+      operationId: batch_import_contacts_api_v2_labby_contacts_batch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactBatchRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactBatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/sales/contacts/batch:
+    post:
+      tags:
+      - sales-contacts
+      summary: Batch Import Contacts
+      operationId: batch_import_contacts_api_v2_labby_sales_contacts_batch_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactBatchRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactBatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/contacts/{contact_id}:
+    get:
+      tags:
+      - sales-contacts
+      summary: Get Contact
+      operationId: get_contact_api_v2_labby_contacts__contact_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-contacts
+      summary: Update Contact
+      operationId: update_contact_api_v2_labby_contacts__contact_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-contacts
+      summary: Delete Contact
+      operationId: delete_contact_api_v2_labby_contacts__contact_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/contacts/{contact_id}:
+    get:
+      tags:
+      - sales-contacts
+      summary: Get Contact
+      operationId: get_contact_api_v2_labby_sales_contacts__contact_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-contacts
+      summary: Update Contact
+      operationId: update_contact_api_v2_labby_sales_contacts__contact_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesContactUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-contacts
+      summary: Delete Contact
+      operationId: delete_contact_api_v2_labby_sales_contacts__contact_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: contact_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Contact Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesContactDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/social/news/segments:
     get:
       tags:
@@ -2706,6 +3120,425 @@ components:
       - token
       - senha
       title: ResetPasswordRequest
+    SalesContactBatchRequest:
+      properties:
+        contacts:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          maxItems: 1000
+          minItems: 1
+          title: Contacts
+        on_duplicate:
+          type: string
+          enum:
+          - skip
+          - update
+          title: On Duplicate
+          default: skip
+      type: object
+      required:
+      - contacts
+      title: SalesContactBatchRequest
+    SalesContactBatchResponse:
+      properties:
+        total_enviados:
+          type: integer
+          title: Total Enviados
+        importados:
+          type: integer
+          title: Importados
+        duplicados:
+          type: integer
+          title: Duplicados
+        erros:
+          type: integer
+          title: Erros
+        sem_telefone:
+          type: integer
+          title: Sem Telefone
+        detalhes_erros:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Detalhes Erros
+      type: object
+      required:
+      - total_enviados
+      - importados
+      - duplicados
+      - erros
+      - sem_telefone
+      - detalhes_erros
+      title: SalesContactBatchResponse
+    SalesContactCreateRequest:
+      properties:
+        nome:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+            maxLength: 40
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+            format: email
+          - type: 'null'
+          title: Email
+        grupo:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Grupo
+        tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Tags
+        notas:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notas
+        campos_custom:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Campos Custom
+      type: object
+      required:
+      - nome
+      title: SalesContactCreateRequest
+    SalesContactDeleteResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - message
+      title: SalesContactDeleteResponse
+    SalesContactDetail:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        grupo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+        total_conversas:
+          type: integer
+          title: Total Conversas
+        canais_vinculados:
+          items:
+            type: string
+          type: array
+          title: Canais Vinculados
+        ultima_interacao:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Interacao
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        notas:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notas
+        campos_custom:
+          additionalProperties: true
+          type: object
+          title: Campos Custom
+        total_mensagens_enviadas:
+          type: integer
+          title: Total Mensagens Enviadas
+        total_mensagens_recebidas:
+          type: integer
+          title: Total Mensagens Recebidas
+        optout:
+          type: boolean
+          title: Optout
+        status:
+          type: string
+          title: Status
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        canais:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Canais
+        conversas_recentes:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Conversas Recentes
+      type: object
+      required:
+      - id
+      - nome
+      - tags
+      - total_conversas
+      - canais_vinculados
+      - created_at
+      - campos_custom
+      - total_mensagens_enviadas
+      - total_mensagens_recebidas
+      - optout
+      - status
+      - updated_at
+      - canais
+      - conversas_recentes
+      title: SalesContactDetail
+    SalesContactListItem:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        grupo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+        total_conversas:
+          type: integer
+          title: Total Conversas
+        canais_vinculados:
+          items:
+            type: string
+          type: array
+          title: Canais Vinculados
+        ultima_interacao:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Interacao
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - nome
+      - tags
+      - total_conversas
+      - canais_vinculados
+      - created_at
+      title: SalesContactListItem
+    SalesContactMutationResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        grupo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        notas:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notas
+        campos_custom:
+          additionalProperties: true
+          type: object
+          title: Campos Custom
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - nome
+      - tags
+      - message
+      title: SalesContactMutationResponse
+    SalesContactUpdateRequest:
+      properties:
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+            maxLength: 40
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+            format: email
+          - type: 'null'
+          title: Email
+        grupo:
+          anyOf:
+          - type: string
+            maxLength: 120
+          - type: 'null'
+          title: Grupo
+        tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Tags
+        notas:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notas
+        campos_custom:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Campos Custom
+        optout:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Optout
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - archived
+            - blocked
+          - type: 'null'
+          title: Status
+      type: object
+      title: SalesContactUpdateRequest
+    SalesContactsResponse:
+      properties:
+        contacts:
+          items:
+            $ref: '#/components/schemas/SalesContactListItem'
+          type: array
+          title: Contacts
+        total:
+          type: integer
+          title: Total
+        page:
+          type: integer
+          title: Page
+        per_page:
+          type: integer
+          title: Per Page
+        pages:
+          type: integer
+          title: Pages
+      type: object
+      required:
+      - contacts
+      - total
+      - page
+      - per_page
+      - pages
+      title: SalesContactsResponse
     SocialNewsCurationRequest:
       properties:
         idempotency_key:

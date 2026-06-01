@@ -27,6 +27,7 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 
 Commits locais relevantes:
 
+- `d4abb36 feat: complete social news frontend parity`
 - `62650a1 feat: add social news curation flow`
 - `33b62ba fix: harden social news curation cutover parity`
 - `9cdcbcb docs: record social curation flow`
@@ -402,6 +403,8 @@ Entregue localmente em 2026-06-01:
 
 ### A3 - Sales transplantado
 
+Status: primeira fatia tecnica iniciada localmente.
+
 Objetivo: portar o minimo de Sales necessario para a Labby operar sem OmniiaPro.
 
 Ordem:
@@ -427,6 +430,22 @@ Gate:
 - Primeiro canal/webhook funcional via fila.
 - Frontend Sales chamando backend Labby.
 - Teste E2E basico de Sales sem OmniiaPro.
+
+Entregue localmente em 2026-06-01:
+
+- Migration `006_sales_contacts_foundation`.
+- Tabela `sales_contacts`.
+- Endpoints flat `/api/v2/labby/contacts/*` compativeis com o frontend atual.
+- Endpoints canonicos `/api/v2/labby/sales/contacts/*`.
+- CRUD de contacts com listagem paginada e filtros `search`, `grupo` e `tag`.
+- Batch import em `POST /contacts/batch` e `/sales/contacts/batch`.
+- `require_module("sales")` no router.
+- Actor por `created_by_membership_id` e `updated_by_membership_id`.
+- Unique parcial por `tenant_id + phone_normalized`.
+- Normalizacao de telefone/email.
+- Testes de contrato flat/canonico, modulo `sales`, idempotencia de batch e
+  cross-tenant negativo no service.
+- Documento `docs/a3-sales-contacts-handoff.md`.
 
 ### A4 - Integracoes reais standalone
 
