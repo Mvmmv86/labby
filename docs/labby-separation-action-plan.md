@@ -1,6 +1,6 @@
 # Labby - Plano de Acao Revisado para Separacao 100%
 
-Data: 2026-05-29
+Data: 2026-06-01
 Branch local: `feature/f3-team-invites-modules`
 Repo local: `C:\Users\marcu\labby-backend`
 
@@ -26,6 +26,7 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 
 Commits locais relevantes:
 
+- `6fd4760 docs: add revised Labby separation action plan`
 - `1065034 chore: add scalability database foundation`
 - `a897d73 chore: remove Docker from Labby backend flow`
 - `85c8aa0 feat: add team invites and module permissions`
@@ -185,64 +186,63 @@ Separacao de processos:
 
 ## Plano de fases atualizado
 
-### F0 - Repo e governanca
+Este plano foi reordenado apos revisao externa. A prioridade nao e construir a
+plataforma social multi-rede completa agora. A prioridade e separar a Labby do
+OmniiaPro cedo, com o fluxo existente funcionando no backend proprio. A expansao
+para Facebook, Instagram, YouTube e LinkedIn entra depois do cutover.
 
-Status: parcialmente feito localmente.
+### G0 - Repo e governanca imediata
+
+Status: pendente por decisao operacional.
 
 Falta:
 
 - Criar repo GitHub `labby-backend`.
 - Configurar `origin`.
 - Fazer push da branch atual.
-- Definir ambiente de deploy sem Docker.
-- Definir Postgres/Redis gerenciados.
+- Ativar CI no GitHub.
+- Proteger branch principal.
+- Documentar secrets de producao.
 
 Gate:
 
-- Repo remoto criado.
-- CI rodando.
-- Branch protegida.
-- Secrets de producao documentados.
+- Historico local protegido no GitHub.
+- CI rodando no repo remoto.
+- Branch principal protegida.
 
-### F1 - Bootstrap tecnico
+## Trilho A - Separacao primeiro
 
-Status: feito.
+Objetivo: tirar a Labby do risco de acoplamento com OmniiaPro antes de expandir
+produto.
 
-Gate ja validado:
+### A0 - Base ja entregue
 
-- FastAPI sobe.
-- Healthcheck funciona.
+Status: feito localmente.
+
+Inclui:
+
+- F1 bootstrap tecnico.
+- F2 auth/memberships.
+- F3 equipe/permissoes.
+- hardening de escala inicial.
+- remocao de Docker do fluxo.
+
+Gate ja validado localmente:
+
+- `ruff` passou.
+- `pytest` passou.
 - Alembic gera SQL.
-- CI passa.
+- endpoints atuais sem N+1 relevante.
 
-### F2 - Auth/memberships
+### A1 - Jobs/outbox para o fluxo existente
 
-Status: feito.
+Objetivo: criar a fundacao de processos pesados antes de transplantar Social e
+Sales.
 
-Gate ja validado:
-
-- Register/login/refresh/logout.
-- JWT com tenant/membership.
-- Refresh opaco.
-- Reset password.
-- Switch tenant.
-
-### F3 - Equipe/permissoes
-
-Status: feito.
-
-Gate ja validado:
-
-- Convites.
-- Aceite de convite.
-- Usuario existente com nova membership.
-- Permissoes por modulo.
-- Sem N+1 relevante nos endpoints atuais.
-
-### F4 - Fundacao de jobs e outbox
-
-Objetivo: preparar a Labby para processos pesados antes de implementar redes
-sociais.
+Decisao importante a fechar: Celery continua sendo executor dos jobs, mas o banco
+vira fonte de verdade do estado/idempotencia. Redis/Celery transporta execucao;
+tabelas `jobs/outbox/webhook_events` guardam historico, retry e auditoria. Nao
+devem existir duas filas concorrentes sem contrato.
 
 Criar tabelas:
 
@@ -250,7 +250,7 @@ Criar tabelas:
 - `job_attempts`
 - `outbox_events`
 - `webhook_events`
-- `rate_limit_buckets` ou estrutura equivalente em Redis + auditoria no banco
+- `rate_limit_events` ou equivalente auditavel
 
 Campos essenciais de `jobs`:
 
@@ -281,16 +281,186 @@ Invariantes:
 - retry com backoff.
 - dead-letter para falhas permanentes.
 - nenhuma request HTTP espera job pesado terminar.
+- todo webhook bruto e persistido antes de processar.
 
 Gate:
 
 - Criar job idempotente.
-- Worker processa.
+- Worker processa a partir do job.
 - Retry funciona.
 - Job duplicado nao duplica efeito.
 - Metricas basicas de fila existem.
+- Teste cross-tenant cobrindo jobs e eventos.
 
-### F5 - Fundacao de integracoes sociais
+### A2 - Social atual transplantado
+
+Objetivo: portar o fluxo que ja existe hoje antes de criar a plataforma social
+multi-rede.
+
+Fluxo alvo:
+
+- X/news radar.
+- IA cria/rewrite noticia.
+- curadoria/aprovacao.
+- digest por email.
+- subscribers/unsubscribe.
+- dispatch com Resend.
+
+Regras:
+
+- podar smells do codigo antigo durante o transplante.
+- manter contrato que o frontend atual ja usa quando possivel.
+- trocar acoplamentos OmniiaFlow/OmniiaPro por dominios Labby.
+- jobs para captura, IA e envio.
+- idempotencia para run, item de curadoria e dispatch.
+
+Gate:
+
+- Radar do X funcionando no backend Labby.
+- IA funcionando por job.
+- Digest real enviado.
+- Unsubscribe funcionando.
+- Nenhuma chamada do frontend social para OmniiaPro.
+- Teste E2E do fluxo X -> IA -> digest.
+
+### A3 - Sales transplantado
+
+Objetivo: portar o minimo de Sales necessario para a Labby operar sem OmniiaPro.
+
+Ordem:
+
+1. Contacts primeiro.
+2. Inbox.
+3. Campanhas.
+4. Bots.
+5. Webchat.
+6. Webhooks existentes: Evolution, WhatsApp Cloud, Telegram, Discord.
+
+Regras:
+
+- tenant-scoped.
+- actor por `membership_id`.
+- webhooks entram por `webhook_events` e jobs.
+- rate limit por canal.
+- audit log em acoes criticas.
+
+Gate:
+
+- Contacts funcional.
+- Primeiro canal/webhook funcional via fila.
+- Frontend Sales chamando backend Labby.
+- Teste E2E basico de Sales sem OmniiaPro.
+
+### A4 - Integracoes reais standalone
+
+Objetivo: remover dependencias indiretas do OmniiaPro nos servicos externos.
+
+Integracoes:
+
+- Resend.
+- X API.
+- provedor IA.
+- eventuais secrets/configs de canais de venda.
+
+Regras:
+
+- secrets `LABBY_*`.
+- timeouts em toda chamada externa.
+- retries controlados por job.
+- logs com `tenant_id`, `job_id`, `provider`.
+
+Gate:
+
+- Nenhuma config de Labby depende de env OmniiaPro.
+- Falha externa nao quebra request principal.
+- Jobs registram erro e retry.
+
+### A5 - Observabilidade e load test
+
+Objetivo: validar a separacao antes do cutover.
+
+Metricas obrigatorias:
+
+- request latency por endpoint.
+- error rate.
+- DB pool usage.
+- Redis latency.
+- fila por queue.
+- jobs pendentes.
+- jobs falhos.
+- chamadas por provider.
+- rate limit por tenant/provider.
+
+Load test minimo:
+
+- 500 usuarios autenticados.
+- 50 tenants.
+- login/refresh concorrente.
+- equipe/modulos.
+- convites.
+- X/news capture.
+- IA por job.
+- digest em lote.
+- webhooks duplicados.
+
+Gate:
+
+- API simples continua responsiva durante jobs.
+- Sem duplicidade em retry.
+- Sem vazamento cross-tenant.
+- Sem N+1 nas listagens principais.
+- Limite de conexoes DB dimensionado.
+
+### A6 - Cutover Labby 100%
+
+Objetivo: apontar `api.labby.com.br` para o backend Labby e tirar o frontend da
+dependencia do OmniiaPro.
+
+Passos:
+
+1. Deploy do backend Labby.
+2. Migrations em producao.
+3. Configurar envs reais.
+4. Configurar DNS `api.labby.com.br`.
+5. Apontar frontend para backend novo.
+6. Rodar E2E.
+7. Monitorar filas, requests, DB e Redis.
+
+Gate:
+
+- login real.
+- convite real.
+- permissao por modulo.
+- Social atual funcionando.
+- Sales minimo funcionando.
+- digest real.
+- nenhuma chamada do frontend para `/api/v2/omniaflow/*`.
+
+### A7 - Descomissionar OmniiaFlow no OmniiaPro
+
+Objetivo: reduzir risco no produto principal.
+
+Passos:
+
+- bloquear rotas antigas usadas pela Labby.
+- remover jobs antigos de OmniiaFlow.
+- remover envs antigos quando seguro.
+- manter backup/migration notes.
+
+Gate:
+
+- Labby opera sem OmniiaPro.
+- OmniiaPro continua com testes verdes.
+- Nenhuma dependencia cruzada ativa.
+
+## Trilho B - Plataforma social multi-rede depois do cutover
+
+Objetivo: expandir a Labby para social media parruda sem atrasar a separacao.
+
+Este trilho so comeca depois do A6, exceto por decisoes de schema que sejam
+baratas e nao bloqueiem a separacao.
+
+### B1 - Fundacao de integracoes sociais multi-rede
 
 Objetivo: criar base unica para Facebook, Instagram, YouTube, LinkedIn, X e
 futuras redes.
@@ -298,6 +468,7 @@ futuras redes.
 Criar tabelas:
 
 - `social_providers`
+- `social_oauth_grants`
 - `social_accounts`
 - `social_account_tokens`
 - `social_scopes`
@@ -305,83 +476,60 @@ Criar tabelas:
 - `social_sync_states`
 - `social_external_objects`
 
-`social_accounts` deve conter:
+Decisao importante: separar grant OAuth de conta social. No Meta, por exemplo,
+um token/grant pode dar acesso a N paginas/contas. Entao:
 
-- `tenant_id`
-- `provider`
-- `provider_account_id`
-- `display_name`
-- `username`
-- `avatar_url`
-- `status`
-- `connected_by_membership_id`
-- `last_sync_at`
-- `metadata`
-
-`social_account_tokens` deve conter:
-
-- `social_account_id`
-- token criptografado, nunca texto puro
-- refresh token criptografado, quando existir
-- `expires_at`
-- `scopes`
-- `status`
+- `social_oauth_grants` representa a autorizacao/token.
+- `social_accounts` representa paginas, perfis, canais ou contas conectadas.
 
 Requisitos:
 
-- Criptografia de tokens externos.
-- Refresh automatico antes de expirar.
-- Revogacao/desconexao segura.
-- Validacao de scopes por funcionalidade.
-- Rate limit por provider, tenant e conta conectada.
+- criptografia de tokens externos.
+- refresh automatico antes de expirar.
+- revogacao/desconexao segura.
+- validacao de scopes por funcionalidade.
+- rate limit por provider, tenant, grant e conta.
 
 Gate:
 
-- Conectar conta fake/provider stub.
-- Salvar token criptografado.
-- Renovar token.
-- Desconectar conta.
-- Bloquear acao sem scope correto.
+- conectar provider fake.
+- salvar grant criptografado.
+- mapear N contas a partir de um grant.
+- renovar token.
+- desconectar conta.
+- bloquear acao sem scope correto.
 
-### F6 - Webhooks sociais
+### B2 - Webhooks sociais + fallback de polling
 
-Objetivo: receber eventos das redes sem processar tudo na request.
+Objetivo: receber eventos quando a rede suporta webhook e usar polling quando
+nao suporta ou quando o webhook nao cobre tudo.
 
-Fluxo:
+Fluxo webhook:
 
-1. Endpoint publico recebe webhook.
-2. Valida assinatura/verificacao do provider.
-3. Persiste evento bruto em `webhook_events`.
-4. Retorna rapido.
-5. Worker processa e gera jobs derivados.
+1. endpoint publico recebe evento.
+2. valida assinatura/verificacao.
+3. persiste evento bruto em `webhook_events`.
+4. retorna rapido.
+5. worker processa.
 
-Requisitos:
+Fluxo polling:
 
-- idempotencia por provider event id.
-- assinatura por provider.
-- rate limit.
-- payload bruto preservado.
-- status de processamento.
+1. scheduler cria job de sync.
+2. adapter busca incrementos por cursor.
+3. persiste objetos com idempotencia.
+4. atualiza `social_sync_states`.
 
 Gate:
 
-- Webhook duplicado nao duplica processamento.
-- Webhook invalido e rejeitado.
-- Processamento acontece em worker.
+- webhook duplicado nao duplica processamento.
+- webhook invalido e rejeitado.
+- polling incremental funciona.
+- provider sem webhook ainda sincroniza.
 
-### F7 - Social ingestion
+### B3 - Social ingestion multi-rede
 
-Objetivo: capturar dados das redes.
-
-Dados esperados:
-
-- posts
-- comentarios
-- replies
-- mensagens quando a API permitir
-- metricas
-- mencoes
-- midias
+Objetivo: capturar posts, comentarios, replies, metricas, mencoes, midias e
+mensagens quando a API permitir.
 
 Tabelas provaveis:
 
@@ -396,19 +544,19 @@ Invariantes:
 
 - unique por `tenant_id + provider + external_id`.
 - indice por `tenant_id + social_account_id + created_at`.
-- nao duplicar post/comentario em retry.
 - separar conteudo bruto de conteudo processado pela IA.
+- retry sem duplicar dados.
 
 Gate:
 
 - sync incremental.
 - deduplicacao.
 - paginacao/cursor por provider.
-- retry sem duplicar dados.
+- captura de metricas por job.
 
-### F8 - Social publishing e calendario
+### B4 - Publishing, calendario e reconciliacao
 
-Objetivo: agendar e publicar conteudo.
+Objetivo: publicar e agendar conteudo sem risco de double-post.
 
 Tabelas provaveis:
 
@@ -416,24 +564,27 @@ Tabelas provaveis:
 - `social_scheduled_posts`
 - `social_publish_attempts`
 - `social_post_variants`
+- `social_publish_reconciliations`
 
 Requisitos:
 
+- idempotencia por publicacao.
 - status de publicacao.
 - tentativa por provider.
-- idempotencia por publicacao.
 - preview antes de publicar.
+- reconciliacao depois de publicar para confirmar external id.
+- retry nao pode gerar double-post.
 - logs de erro por provider.
-- respeitar rate limits.
 
 Gate:
 
 - criar post agendado.
 - worker publica.
-- erro gera retry/backoff.
+- reconciliacao confirma external id.
+- erro gera retry/backoff seguro.
 - publicacao duplicada e bloqueada.
 
-### F9 - IA e curadoria social
+### B5 - IA e curadoria social multi-rede
 
 Objetivo: estruturar IA sem travar request e sem misturar dados de tenants.
 
@@ -462,9 +613,9 @@ Gate:
 - aceite humano gera acao.
 - falha da IA nao quebra fluxo principal.
 
-### F10 - Digest/email/newsletter
+### B6 - Digest/newsletter evoluido
 
-Objetivo: evoluir o digest atual para estrutura escalavel.
+Objetivo: evoluir digest para listas, campanhas e audiencias robustas.
 
 Tabelas provaveis:
 
@@ -487,62 +638,8 @@ Requisitos:
 Gate:
 
 - envio em lote sem travar API.
-- reenvio nao duplica email para quem ja recebeu.
+- reenvio nao duplica email.
 - unsubscribe bloqueia envio futuro.
-
-### F11 - Sales foundation
-
-Objetivo: migrar a parte de vendas sem depender do OmniiaPro.
-
-Dominios:
-
-- contatos
-- inbox
-- campanhas
-- bots
-- webchat
-- WhatsApp/Telegram/Discord/canais de venda
-
-Mesmas regras:
-
-- tenant-scoped.
-- actor por membership.
-- jobs para webhooks e mensagens.
-- rate limit por canal.
-- audit log.
-
-Gate:
-
-- contatos funcionais.
-- inbox funcional.
-- webhooks entram por fila.
-- frontend Labby chama apenas backend Labby.
-
-### F12 - Cutover 100%
-
-Objetivo: desligar dependencia Labby -> OmniiaPro.
-
-Passos:
-
-1. Deploy do backend Labby.
-2. Migrations em producao.
-3. DNS `api.labby.com.br`.
-4. Configurar envs.
-5. Frontend aponta para backend novo.
-6. Teste E2E.
-7. Monitoramento ativo.
-8. Bloquear uso de `/api/v2/omniaflow/*` para Labby.
-9. Remover codigo Labby antigo do OmniiaPro quando seguro.
-
-Gate:
-
-- login real.
-- convite real.
-- permissao por modulo.
-- social media basico.
-- digest real.
-- sales basico.
-- nenhuma chamada do frontend para OmniiaPro.
 
 ## Modelo de banco: regras obrigatorias daqui para frente
 
@@ -655,15 +752,20 @@ Metas iniciais:
 
 ## Perguntas para Claude revisar
 
-1. O plano de fases esta na ordem correta para uma Labby social-heavy?
-2. A fundacao de jobs/outbox deve vir imediatamente antes de qualquer provider real?
-3. O modelo `social_accounts + tokens + sync states + webhook events` cobre Facebook,
-   Instagram, YouTube, LinkedIn e X?
-4. Falta alguma tabela essencial antes das integracoes sociais?
-5. A estrategia de idempotencia proposta e suficiente para webhooks, publish e email?
-6. O plano de filas separadas por tipo de workload esta adequado?
-7. A ausencia de Docker muda alguma recomendacao de deploy?
-8. Para 500+ usuarios, quais indices adicionais ele recomenda antes dos modulos
-   Social/Sales completos?
-9. Ele recomenda Postgres RLS ou filtro por `tenant_id` na aplicacao neste momento?
-10. Que gates ele exigiria antes de apontar `api.labby.com.br` para o backend novo?
+1. O novo Trilho A prioriza corretamente separar o fluxo existente antes de
+   expandir para multi-rede?
+2. A1 deve usar Celery como executor e tabelas `jobs/outbox/webhook_events` como
+   fonte de verdade, ou ha uma alternativa melhor sem criar duas filas?
+3. Para transplantar o Social atual, quais smells do fluxo X -> IA -> digest
+   devem ser removidos obrigatoriamente antes do cutover?
+4. Para transplantar Sales, a ordem contacts -> inbox -> campanhas/bots/webchat
+   -> webhooks esta correta?
+5. O gate de A6 e suficiente para declarar separacao 100% da Labby?
+6. O descomissionamento A7 protege bem o OmniiaPro depois do cutover?
+7. No Trilho B, separar `social_oauth_grants` de `social_accounts` cobre bem Meta,
+   YouTube, LinkedIn e X?
+8. O fallback de polling deve ser modelado ja em B2 para todas as redes, mesmo as
+   que possuem webhook?
+9. A reconciliacao de publish proposta em B4 e suficiente para evitar double-post?
+10. Ele recomenda filtro por `tenant_id` na aplicacao agora + testes cross-tenant,
+    deixando Postgres RLS como hardening antes do launch?
