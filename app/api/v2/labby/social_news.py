@@ -11,9 +11,11 @@ from app.schemas.social_news import (
     SocialNewsCurationRequest,
     SocialNewsCurationResponse,
     SocialNewsDispatchConfigResponse,
-    SocialNewsDispatchEnqueuedResponse,
-    SocialNewsDispatchesResponse,
-    SocialNewsDispatchResponse,
+    SocialNewsFrontendDispatchesResponse,
+    SocialNewsFrontendDispatchResponse,
+    SocialNewsFrontendDispatchRunResponse,
+    SocialNewsFrontendItemResponse,
+    SocialNewsFrontendItemsResponse,
     SocialNewsItemResponse,
     SocialNewsItemsResponse,
     SocialNewsJobRequest,
@@ -37,6 +39,25 @@ from app.schemas.social_news import (
 )
 
 router = APIRouter(prefix="/social/news", tags=["social-news"])
+
+FRONTEND_ITEM_STATUS = {
+    "captured": "capturado",
+    "ranked": "ranqueado",
+    "discarded_rank": "descartado_rank",
+    "approved_stage1": "aprovado_stage1",
+    "rejected_stage1": "rejeitado_stage1",
+    "rewritten": "reescrito",
+    "approved_stage2": "aprovado_stage2",
+    "rejected_stage2": "rejeitado_stage2",
+    "sent": "enviado",
+}
+
+FRONTEND_RANKING_SOURCE = {
+    "engagement": "top_engagement",
+    "top_engagement": "top_engagement",
+    "exploration": "exploracao",
+    "exploracao": "exploracao",
+}
 
 
 def get_social_news_service(db: Session = Depends(get_db)) -> SocialNewsService:
@@ -198,7 +219,7 @@ def list_items(
     return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
 
 
-@router.get("/curation/stage1", response_model=SocialNewsItemsResponse)
+@router.get("/curation/stage1", response_model=SocialNewsFrontendItemsResponse)
 def list_curation_stage1_items(
     segment_id: str | None = Query(default=None),
     run_id: str | None = Query(default=None),
@@ -206,7 +227,7 @@ def list_curation_stage1_items(
     offset: int = Query(default=0, ge=0),
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemsResponse:
+) -> SocialNewsFrontendItemsResponse:
     rows = service.list_items(
         current=current,
         segment_id=segment_id,
@@ -215,10 +236,10 @@ def list_curation_stage1_items(
         limit=limit,
         offset=offset,
     )
-    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+    return SocialNewsFrontendItemsResponse(items=[_frontend_item(row) for row in rows])
 
 
-@router.get("/curation/stage2", response_model=SocialNewsItemsResponse)
+@router.get("/curation/stage2", response_model=SocialNewsFrontendItemsResponse)
 def list_curation_stage2_items(
     segment_id: str | None = Query(default=None),
     run_id: str | None = Query(default=None),
@@ -226,7 +247,7 @@ def list_curation_stage2_items(
     offset: int = Query(default=0, ge=0),
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemsResponse:
+) -> SocialNewsFrontendItemsResponse:
     rows = service.list_items(
         current=current,
         segment_id=segment_id,
@@ -235,10 +256,10 @@ def list_curation_stage2_items(
         limit=limit,
         offset=offset,
     )
-    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+    return SocialNewsFrontendItemsResponse(items=[_frontend_item(row) for row in rows])
 
 
-@router.get("/curation/ready", response_model=SocialNewsItemsResponse)
+@router.get("/curation/ready", response_model=SocialNewsFrontendItemsResponse)
 def list_curation_ready_items(
     segment_id: str | None = Query(default=None),
     run_id: str | None = Query(default=None),
@@ -246,7 +267,7 @@ def list_curation_ready_items(
     offset: int = Query(default=0, ge=0),
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemsResponse:
+) -> SocialNewsFrontendItemsResponse:
     rows = service.list_items(
         current=current,
         segment_id=segment_id,
@@ -255,7 +276,7 @@ def list_curation_ready_items(
         limit=limit,
         offset=offset,
     )
-    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+    return SocialNewsFrontendItemsResponse(items=[_frontend_item(row) for row in rows])
 
 
 @router.get("/curation/dispatch-config", response_model=SocialNewsDispatchConfigResponse)
@@ -273,20 +294,20 @@ def get_curation_dispatch_config(
     )
 
 
-@router.post("/curation/items/{item_id}/stage1", response_model=SocialNewsItemResponse)
+@router.post("/curation/items/{item_id}/stage1", response_model=SocialNewsFrontendItemResponse)
 def decide_curation_stage1_item(
     item_id: str,
     data: SocialNewsStageDecisionRequest,
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemResponse:
+) -> SocialNewsFrontendItemResponse:
     if data.action == "reject":
         item = service.reject_stage1(
             current=current,
             item_id=item_id,
             rejection_reason=data.motivo,
         )
-        return SocialNewsItemResponse(**item)
+        return _frontend_item(item)
 
     item, _job = service.approve_stage1(
         current=current,
@@ -294,73 +315,73 @@ def decide_curation_stage1_item(
         idempotency_key=data.idempotency_key,
         rewrite_on_approve=data.rewrite_on_approve,
     )
-    return SocialNewsItemResponse(**item)
+    return _frontend_item(item)
 
 
-@router.post("/curation/items/{item_id}/rewrite", response_model=SocialNewsItemResponse)
+@router.post("/curation/items/{item_id}/rewrite", response_model=SocialNewsFrontendItemResponse)
 def rewrite_curation_item(
     item_id: str,
     data: SocialNewsJobRequest | None = None,
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemResponse:
+) -> SocialNewsFrontendItemResponse:
     service.enqueue_rewrite(
         current=current,
         item_id=item_id,
         idempotency_key=data.idempotency_key if data else None,
     )
     item = service.get_item(current=current, item_id=item_id)
-    return SocialNewsItemResponse(**item)
+    return _frontend_item(item)
 
 
-@router.post("/curation/items/{item_id}/stage2", response_model=SocialNewsItemResponse)
+@router.post("/curation/items/{item_id}/stage2", response_model=SocialNewsFrontendItemResponse)
 def decide_curation_stage2_item(
     item_id: str,
     data: SocialNewsStageDecisionRequest,
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsItemResponse:
+) -> SocialNewsFrontendItemResponse:
     if data.action == "reject":
         item = service.reject_stage2(
             current=current,
             item_id=item_id,
             rejection_reason=data.motivo,
         )
-        return SocialNewsItemResponse(**item)
+        return _frontend_item(item)
 
     item = service.approve_stage2(current=current, item_id=item_id)
-    return SocialNewsItemResponse(**item)
+    return _frontend_item(item)
 
 
-@router.post("/curation/runs/{run_id}/dispatch", response_model=SocialNewsDispatchEnqueuedResponse)
+@router.post(
+    "/curation/runs/{run_id}/dispatch",
+    response_model=SocialNewsFrontendDispatchRunResponse,
+)
 def dispatch_curation_run(
     run_id: str,
     data: SocialNewsJobRequest | None = None,
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsDispatchEnqueuedResponse:
-    job = service.enqueue_dispatch(
+) -> SocialNewsFrontendDispatchRunResponse:
+    service.enqueue_dispatch(
         current=current,
         run_id=run_id,
         idempotency_key=data.idempotency_key if data else None,
     )
     preview = service.dispatch_preview(current=current, run_id=run_id)
-    return SocialNewsDispatchEnqueuedResponse(
-        **preview,
-        job=_job_response(job),
-    )
+    return SocialNewsFrontendDispatchRunResponse(**preview)
 
 
-@router.get("/curation/dispatches", response_model=SocialNewsDispatchesResponse)
+@router.get("/curation/dispatches", response_model=SocialNewsFrontendDispatchesResponse)
 def list_curation_dispatches(
     run_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=200),
     current: CurrentMembership = Depends(get_current_membership),
     service: SocialNewsService = Depends(get_social_news_service),
-) -> SocialNewsDispatchesResponse:
+) -> SocialNewsFrontendDispatchesResponse:
     rows = service.list_dispatches(current=current, run_id=run_id, limit=limit)
-    return SocialNewsDispatchesResponse(
-        dispatches=[SocialNewsDispatchResponse(**row) for row in rows]
+    return SocialNewsFrontendDispatchesResponse(
+        dispatches=[_frontend_dispatch(row) for row in rows]
     )
 
 
@@ -522,3 +543,69 @@ def _job_response(job: JobRecord) -> EnqueuedJobResponse:
         status=job.status,
         idempotency_key=job.idempotency_key,
     )
+
+
+def _frontend_item(row) -> SocialNewsFrontendItemResponse:
+    author_metadata = row.get("author_metadata") or {}
+    if not isinstance(author_metadata, dict):
+        author_metadata = {}
+    ranking_source = row.get("ranking_source")
+    return SocialNewsFrontendItemResponse(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        run_id=row["run_id"],
+        segment_id=row["segment_id"],
+        source_id=row.get("source_id"),
+        source_type=row.get("source_type"),
+        source_valor=row.get("source_valor") or row.get("source_value"),
+        external_id=row["external_id"],
+        external_url=row.get("external_url") or "",
+        published_at=row.get("published_at"),
+        autor_handle=row.get("author_handle") or "",
+        autor_nome=row.get("author_name"),
+        autor_verified=bool(
+            author_metadata.get("verified") or author_metadata.get("is_blue_verified")
+        ),
+        autor_followers_count=author_metadata.get("followers_count")
+        or author_metadata.get("followers"),
+        conteudo_original=row["original_content"],
+        media_urls=row.get("media_urls") or [],
+        metrics=row.get("metrics") or {},
+        ranking_score=row.get("ranking_score"),
+        ranking_motivo=row.get("ranking_reason"),
+        ranking_origem=FRONTEND_RANKING_SOURCE.get(str(ranking_source), ranking_source),
+        tipo_match=row.get("type_match"),
+        conteudo_reescrito=row.get("rewritten_content"),
+        reescrito_modelo=row.get("rewritten_model"),
+        reescrito_at=row.get("rewritten_at"),
+        rejeitado_motivo=row.get("rejection_reason"),
+        aprovado_stage1_por=_optional_str(row.get("approved_stage1_by_membership_id")),
+        aprovado_stage1_at=row.get("approved_stage1_at"),
+        aprovado_stage2_por=_optional_str(row.get("approved_stage2_by_membership_id")),
+        aprovado_stage2_at=row.get("approved_stage2_at"),
+        feedback_label=row.get("feedback_label"),
+        status=FRONTEND_ITEM_STATUS.get(str(row.get("status")), str(row.get("status"))),
+        created_at=row["created_at"],
+    )
+
+
+def _frontend_dispatch(row) -> SocialNewsFrontendDispatchResponse:
+    return SocialNewsFrontendDispatchResponse(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        run_id=row["run_id"],
+        subscriber_id=row["subscriber_id"],
+        email=row.get("email") or row["email_normalized"],
+        subject=row["subject"],
+        status=row["status"],
+        idempotency_key=row["idempotency_key"],
+        resend_id=row.get("resend_id") or row.get("provider_message_id"),
+        error_message=row.get("error_message"),
+        sent_at=row.get("sent_at"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _optional_str(value) -> str | None:
+    return str(value) if value is not None else None

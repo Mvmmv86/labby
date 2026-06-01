@@ -110,6 +110,111 @@ class FakeSocialNewsService:
         }
 
 
+class StatefulCurationService(FakeSocialNewsService):
+    def __init__(self) -> None:
+        super().__init__()
+        self.item_id = UUID("77777777-7777-7777-7777-777777777777")
+        self.run_id = UUID("55555555-5555-5555-5555-555555555555")
+        self.items = {
+            str(self.item_id): make_item_row(
+                status="ranked",
+                ranking_source="engagement",
+                author_metadata={"followers_count": 123, "verified": True},
+                media_urls=["https://cdn.example.com/image.png"],
+                metrics={"likes": 10, "retweets": 2, "replies": 1},
+            )
+        }
+        self.dispatches = []
+
+    def list_items(
+        self,
+        *,
+        current,
+        segment_id=None,
+        run_id=None,
+        status=None,
+        limit=100,
+        offset=0,
+    ):
+        self.current = current
+        self.list_status = status
+        return [
+            item
+            for item in self.items.values()
+            if status is None or item["status"] == status
+        ][offset : offset + limit]
+
+    def get_item(self, *, current, item_id):
+        self.current = current
+        return self.items[str(item_id)]
+
+    def approve_stage1(
+        self,
+        *,
+        current,
+        item_id,
+        idempotency_key=None,
+        rewrite_on_approve=True,
+    ):
+        self.current = current
+        self.stage1_rewrite_on_approve = rewrite_on_approve
+        item = self.items[str(item_id)]
+        item.update(
+            status="approved_stage1",
+            approved_stage1_by_membership_id=current.membership_id,
+            approved_stage1_at=datetime(2026, 6, 1, 12, 5, tzinfo=UTC),
+        )
+        if rewrite_on_approve:
+            item.update(
+                status="rewritten",
+                rewritten_content="Texto final do digest.",
+                rewritten_model="fallback-editorial",
+                rewritten_at=datetime(2026, 6, 1, 12, 6, tzinfo=UTC),
+            )
+        return item, make_job_record(job_type="social.news.rewrite", queue_name="worker-ai")
+
+    def reject_stage1(self, *, current, item_id, rejection_reason=None):
+        self.current = current
+        item = self.items[str(item_id)]
+        item.update(status="rejected_stage1", rejection_reason=rejection_reason)
+        return item
+
+    def approve_stage2(self, *, current, item_id):
+        self.current = current
+        item = self.items[str(item_id)]
+        item.update(
+            status="approved_stage2",
+            approved_stage2_by_membership_id=current.membership_id,
+            approved_stage2_at=datetime(2026, 6, 1, 12, 7, tzinfo=UTC),
+        )
+        return item
+
+    def enqueue_dispatch(self, *, current, run_id, idempotency_key=None):
+        self.current = current
+        self.dispatch_run_id = run_id
+        self.dispatches.append(make_dispatch_row(run_id=UUID(str(run_id))))
+        return make_job_record(
+            job_type="social.news.dispatch",
+            queue_name="worker-email",
+            idempotency_key="social.news.dispatch:run:test",
+        )
+
+    def dispatch_preview(self, *, current, run_id):
+        self.current = current
+        return {
+            "run_id": UUID(str(run_id)),
+            "sent": 0,
+            "failed": 0,
+            "skipped": 0,
+            "subscribers": 1,
+            "items": 1,
+        }
+
+    def list_dispatches(self, *, current, run_id=None, limit=100):
+        self.current = current
+        return self.dispatches[:limit]
+
+
 def make_current() -> CurrentMembership:
     return CurrentMembership(
         user_id=UUID("11111111-1111-1111-1111-111111111111"),
@@ -163,6 +268,7 @@ def make_item_row(**overrides):
         "published_at": now,
         "author_handle": "labby",
         "author_name": "Labby",
+        "author_metadata": {},
         "original_content": "Labby captured an important update with enough content.",
         "rewritten_content": None,
         "rewritten_model": None,
@@ -307,7 +413,10 @@ def test_frontend_stage1_route_returns_item_directly() -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "approved_stage1"
+    assert body["status"] == "aprovado_stage1"
+    assert body["autor_handle"] == "labby"
+    assert body["conteudo_original"] == "Labby captured an important update with enough content."
+    assert "original_content" not in body
     assert service.stage1_rewrite_on_approve is False
 
 
@@ -318,7 +427,9 @@ def test_frontend_curation_stage_lists_use_expected_status_filters() -> None:
 
     assert response.status_code == 200
     assert service.list_status == "ranked"
-    assert response.json()["items"][0]["status"] == "ranked"
+    body = response.json()
+    assert body["items"][0]["status"] == "ranqueado"
+    assert body["items"][0]["ranking_origem"] == "top_engagement"
 
 
 def test_frontend_dispatch_route_returns_summary_and_job() -> None:
@@ -333,7 +444,7 @@ def test_frontend_dispatch_route_returns_summary_and_job() -> None:
     assert body["run_id"] == run_id
     assert body["subscribers"] == 2
     assert body["items"] == 3
-    assert body["job"]["job_type"] == "social.news.dispatch"
+    assert "job" not in body
 
 
 def test_frontend_dispatches_route_returns_dispatch_rows() -> None:
@@ -342,7 +453,10 @@ def test_frontend_dispatches_route_returns_dispatch_rows() -> None:
     response = client.get("/api/v2/labby/social/news/curation/dispatches")
 
     assert response.status_code == 200
-    assert response.json()["dispatches"][0]["status"] == "sent"
+    dispatch = response.json()["dispatches"][0]
+    assert dispatch["status"] == "sent"
+    assert dispatch["email"] == "user@example.com"
+    assert dispatch["resend_id"] == "msg_1"
 
 
 def test_frontend_dispatch_config_route_is_available() -> None:
@@ -353,3 +467,56 @@ def test_frontend_dispatch_config_route_is_available() -> None:
     assert response.status_code == 200
     assert service.current.tenant_id == UUID("22222222-2222-2222-2222-222222222222")
     assert "email_enabled" in response.json()
+
+
+def test_frontend_curation_e2e_contract_from_stage1_to_dispatch() -> None:
+    service = StatefulCurationService()
+    client, _ = make_client(service)
+    item_id = "77777777-7777-7777-7777-777777777777"
+    run_id = "55555555-5555-5555-5555-555555555555"
+
+    stage1 = client.get("/api/v2/labby/social/news/curation/stage1")
+    assert stage1.status_code == 200
+    stage1_item = stage1.json()["items"][0]
+    assert stage1_item["status"] == "ranqueado"
+    assert stage1_item["autor_verified"] is True
+    assert stage1_item["autor_followers_count"] == 123
+    assert stage1_item["media_urls"] == ["https://cdn.example.com/image.png"]
+
+    approve_stage1 = client.post(
+        f"/api/v2/labby/social/news/curation/items/{item_id}/stage1",
+        json={"action": "approve", "rewrite_on_approve": True},
+    )
+    assert approve_stage1.status_code == 200
+    assert approve_stage1.json()["status"] == "reescrito"
+    assert approve_stage1.json()["conteudo_reescrito"] == "Texto final do digest."
+
+    stage2 = client.get("/api/v2/labby/social/news/curation/stage2")
+    assert stage2.status_code == 200
+    assert stage2.json()["items"][0]["status"] == "reescrito"
+
+    approve_stage2 = client.post(
+        f"/api/v2/labby/social/news/curation/items/{item_id}/stage2",
+        json={"action": "approve"},
+    )
+    assert approve_stage2.status_code == 200
+    assert approve_stage2.json()["status"] == "aprovado_stage2"
+
+    ready = client.get("/api/v2/labby/social/news/curation/ready")
+    assert ready.status_code == 200
+    assert ready.json()["items"][0]["status"] == "aprovado_stage2"
+
+    dispatch = client.post(f"/api/v2/labby/social/news/curation/runs/{run_id}/dispatch")
+    assert dispatch.status_code == 200
+    assert dispatch.json() == {
+        "run_id": run_id,
+        "sent": 0,
+        "failed": 0,
+        "skipped": 0,
+        "subscribers": 1,
+        "items": 1,
+    }
+
+    dispatches = client.get("/api/v2/labby/social/news/curation/dispatches")
+    assert dispatches.status_code == 200
+    assert dispatches.json()["dispatches"][0]["email"] == "user@example.com"

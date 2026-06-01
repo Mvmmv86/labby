@@ -753,7 +753,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemsResponse'
         '422':
           description: Validation Error
           content:
@@ -808,7 +808,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemsResponse'
         '422':
           description: Validation Error
           content:
@@ -863,7 +863,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemsResponse'
         '422':
           description: Validation Error
           content:
@@ -912,7 +912,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemResponse'
         '422':
           description: Validation Error
           content:
@@ -948,7 +948,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemResponse'
         '422':
           description: Validation Error
           content:
@@ -982,7 +982,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemResponse'
         '422':
           description: Validation Error
           content:
@@ -1018,7 +1018,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsDispatchEnqueuedResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendDispatchRunResponse'
         '422':
           description: Validation Error
           content:
@@ -1057,7 +1057,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsDispatchesResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendDispatchesResponse'
         '422':
           description: Validation Error
           content:
@@ -2182,40 +2182,7 @@ components:
       - email_enabled
       - resend_api_key_configured
       title: SocialNewsDispatchConfigResponse
-    SocialNewsDispatchEnqueuedResponse:
-      properties:
-        run_id:
-          type: string
-          format: uuid
-          title: Run Id
-        sent:
-          type: integer
-          title: Sent
-        failed:
-          type: integer
-          title: Failed
-        skipped:
-          type: integer
-          title: Skipped
-        subscribers:
-          type: integer
-          title: Subscribers
-        items:
-          type: integer
-          title: Items
-        job:
-          $ref: '#/components/schemas/EnqueuedJobResponse'
-      type: object
-      required:
-      - run_id
-      - sent
-      - failed
-      - skipped
-      - subscribers
-      - items
-      - job
-      title: SocialNewsDispatchEnqueuedResponse
-    SocialNewsDispatchResponse:
+    SocialNewsFrontendDispatchResponse:
       properties:
         id:
           type: string
@@ -2233,9 +2200,9 @@ components:
           type: string
           format: uuid
           title: Subscriber Id
-        email_normalized:
+        email:
           type: string
-          title: Email Normalized
+          title: Email
         subject:
           type: string
           title: Subject
@@ -2245,14 +2212,11 @@ components:
         idempotency_key:
           type: string
           title: Idempotency Key
-        provider:
-          type: string
-          title: Provider
-        provider_message_id:
+        resend_id:
           anyOf:
           - type: string
           - type: 'null'
-          title: Provider Message Id
+          title: Resend Id
         error_message:
           anyOf:
           - type: string
@@ -2278,25 +2242,229 @@ components:
       - tenant_id
       - run_id
       - subscriber_id
-      - email_normalized
+      - email
       - subject
       - status
       - idempotency_key
-      - provider
       - created_at
       - updated_at
-      title: SocialNewsDispatchResponse
-    SocialNewsDispatchesResponse:
+      title: SocialNewsFrontendDispatchResponse
+    SocialNewsFrontendDispatchRunResponse:
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          title: Run Id
+        sent:
+          type: integer
+          title: Sent
+        failed:
+          type: integer
+          title: Failed
+        skipped:
+          type: integer
+          title: Skipped
+        subscribers:
+          type: integer
+          title: Subscribers
+        items:
+          type: integer
+          title: Items
+      type: object
+      required:
+      - run_id
+      - sent
+      - failed
+      - skipped
+      - subscribers
+      - items
+      title: SocialNewsFrontendDispatchRunResponse
+    SocialNewsFrontendDispatchesResponse:
       properties:
         dispatches:
           items:
-            $ref: '#/components/schemas/SocialNewsDispatchResponse'
+            $ref: '#/components/schemas/SocialNewsFrontendDispatchResponse'
           type: array
           title: Dispatches
       type: object
       required:
       - dispatches
-      title: SocialNewsDispatchesResponse
+      title: SocialNewsFrontendDispatchesResponse
+    SocialNewsFrontendItemResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        run_id:
+          type: string
+          format: uuid
+          title: Run Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        source_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Source Id
+        source_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Type
+        source_valor:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Valor
+        external_id:
+          type: string
+          title: External Id
+        external_url:
+          type: string
+          title: External Url
+        published_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Published At
+        autor_handle:
+          type: string
+          title: Autor Handle
+        autor_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Autor Nome
+        autor_verified:
+          type: boolean
+          title: Autor Verified
+        autor_followers_count:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Autor Followers Count
+        conteudo_original:
+          type: string
+          title: Conteudo Original
+        media_urls:
+          items: {}
+          type: array
+          title: Media Urls
+        metrics:
+          additionalProperties: true
+          type: object
+          title: Metrics
+        ranking_score:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Ranking Score
+        ranking_motivo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ranking Motivo
+        ranking_origem:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ranking Origem
+        tipo_match:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Tipo Match
+        conteudo_reescrito:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Conteudo Reescrito
+        reescrito_modelo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Reescrito Modelo
+        reescrito_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Reescrito At
+        rejeitado_motivo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rejeitado Motivo
+        aprovado_stage1_por:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Aprovado Stage1 Por
+        aprovado_stage1_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Aprovado Stage1 At
+        aprovado_stage2_por:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Aprovado Stage2 Por
+        aprovado_stage2_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Aprovado Stage2 At
+        feedback_label:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Feedback Label
+        status:
+          type: string
+          title: Status
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - run_id
+      - segment_id
+      - external_id
+      - external_url
+      - autor_handle
+      - autor_verified
+      - conteudo_original
+      - media_urls
+      - metrics
+      - status
+      - created_at
+      title: SocialNewsFrontendItemResponse
+    SocialNewsFrontendItemsResponse:
+      properties:
+        items:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendItemResponse'
+          type: array
+          title: Items
+      type: object
+      required:
+      - items
+      title: SocialNewsFrontendItemsResponse
     SocialNewsItemResponse:
       properties:
         id:

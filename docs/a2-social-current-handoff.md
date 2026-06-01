@@ -29,6 +29,9 @@ Data: 2026-06-01
 - Fila de curadoria por endpoints de listagem geral de itens.
 - Aliases de curadoria compativeis com o frontend atual em
   `/api/v2/labby/social/news/curation/*`.
+- Aliases de curadoria devolvem campos/status no contrato legado do frontend
+  (`autor_handle`, `conteudo_original`, `reescrito`, `aprovado_stage2`, etc.),
+  sem mudar o modelo interno em ingles.
 - Aprovacao/rejeicao stage 1 e stage 2 com transicoes tenant-scoped.
 - Aprovacao stage 1 enfileira rewrite idempotente no `worker-ai` na mesma
   transacao de banco da mudanca de status.
@@ -42,6 +45,8 @@ Data: 2026-06-01
   `LABBY_AI_INPUT_COST_PER_MILLION_TOKENS` e
   `LABBY_AI_OUTPUT_COST_PER_MILLION_TOKENS`.
 - Testes de modelos, service e rotas.
+- Teste E2E de contrato frontend para o fluxo stage 1 -> rewrite -> stage 2 ->
+  dispatch.
 
 ## Contrato da fatia
 

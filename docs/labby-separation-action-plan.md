@@ -28,6 +28,9 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 Commits locais relevantes:
 
 - `62650a1 feat: add social news curation flow`
+- `33b62ba fix: harden social news curation cutover parity`
+- `9cdcbcb docs: record social curation flow`
+- `ad7f5ad feat: add social news job handlers`
 - `afaa63c feat: add social news foundation`
 - `a9897d0 fix: configure package discovery for CI`
 - `a550fbf docs: update GitHub repository status`
@@ -368,6 +371,9 @@ Entregue localmente em 2026-06-01:
   `social_news_dispatches`.
 - Endpoints `/api/v2/labby/social/news/*`, incluindo aliases
   `/api/v2/labby/social/news/curation/*` compativeis com o frontend atual.
+- Aliases de curadoria devolvem nomes de campos e status esperados pelo
+  frontend legado (`autor_handle`, `conteudo_original`, `ranqueado`,
+  `reescrito`, `aprovado_stage2`).
 - Runs, rewrite e dispatch criam jobs idempotentes no A1.
 - Handlers dos jobs `social.news.capture`, `social.news.rewrite` e
   `social.news.dispatch` registrados no worker.
@@ -384,6 +390,8 @@ Entregue localmente em 2026-06-01:
   esta configurado.
 - Dispatch Resend por worker com `social_news_dispatches`.
 - Subscribers com unsubscribe assinado e hash persistido.
+- Teste E2E de contrato frontend cobrindo stage 1, rewrite, stage 2, ready e
+  dispatch.
 - Documento `docs/a2-social-current-handoff.md`.
 
 ### A3 - Sales transplantado

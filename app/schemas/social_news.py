@@ -147,6 +147,45 @@ class SocialNewsItemsResponse(BaseModel):
     items: list[SocialNewsItemResponse]
 
 
+class SocialNewsFrontendItemResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    run_id: UUID
+    segment_id: UUID
+    source_id: UUID | None = None
+    source_type: str | None = None
+    source_valor: str | None = None
+    external_id: str
+    external_url: str
+    published_at: datetime | None = None
+    autor_handle: str
+    autor_nome: str | None = None
+    autor_verified: bool
+    autor_followers_count: int | None = None
+    conteudo_original: str
+    media_urls: list[Any]
+    metrics: dict[str, Any]
+    ranking_score: int | None = None
+    ranking_motivo: str | None = None
+    ranking_origem: str | None = None
+    tipo_match: str | None = None
+    conteudo_reescrito: str | None = None
+    reescrito_modelo: str | None = None
+    reescrito_at: datetime | None = None
+    rejeitado_motivo: str | None = None
+    aprovado_stage1_por: str | None = None
+    aprovado_stage1_at: datetime | None = None
+    aprovado_stage2_por: str | None = None
+    aprovado_stage2_at: datetime | None = None
+    feedback_label: str | None = None
+    status: str
+    created_at: datetime
+
+
+class SocialNewsFrontendItemsResponse(BaseModel):
+    items: list[SocialNewsFrontendItemResponse]
+
+
 class SocialNewsCurationRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=180)
     rejection_reason: str | None = Field(default=None, max_length=2000)
@@ -199,6 +238,26 @@ class SocialNewsDispatchesResponse(BaseModel):
     dispatches: list[SocialNewsDispatchResponse]
 
 
+class SocialNewsFrontendDispatchResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    run_id: UUID
+    subscriber_id: UUID
+    email: str
+    subject: str
+    status: str
+    idempotency_key: str
+    resend_id: str | None = None
+    error_message: str | None = None
+    sent_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SocialNewsFrontendDispatchesResponse(BaseModel):
+    dispatches: list[SocialNewsFrontendDispatchResponse]
+
+
 class SocialNewsDispatchEnqueuedResponse(BaseModel):
     run_id: UUID
     sent: int
@@ -207,6 +266,15 @@ class SocialNewsDispatchEnqueuedResponse(BaseModel):
     subscribers: int
     items: int
     job: EnqueuedJobResponse
+
+
+class SocialNewsFrontendDispatchRunResponse(BaseModel):
+    run_id: UUID
+    sent: int
+    failed: int
+    skipped: int
+    subscribers: int
+    items: int
 
 
 class SocialNewsSubscriberCreate(BaseModel):
