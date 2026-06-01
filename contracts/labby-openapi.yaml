@@ -63,6 +63,19 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+  /api/v2/labby/jobs/metrics:
+    get:
+      tags: [jobs]
+      summary: Tenant-scoped job queue metrics
+      responses:
+        "200":
+          description: Queue metrics grouped by queue and status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobMetricsResponse"
+        "403":
+          description: Admin role required
   /api/v2/labby/auth/login:
     post:
       tags: [auth]
@@ -415,6 +428,25 @@ components:
               type: object
               additionalProperties:
                 $ref: "#/components/schemas/DependencyHealth"
+    JobQueueMetricResponse:
+      type: object
+      required: [queue_name, status, count]
+      properties:
+        queue_name:
+          type: string
+        status:
+          type: string
+          enum: [pending, retrying, running, succeeded, dead_letter, cancelled]
+        count:
+          type: integer
+    JobMetricsResponse:
+      type: object
+      required: [metrics]
+      properties:
+        metrics:
+          type: array
+          items:
+            $ref: "#/components/schemas/JobQueueMetricResponse"
     LabbyModule:
       type: object
       required: [key, label, description, accent, accent_bright]

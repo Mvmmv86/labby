@@ -236,6 +236,8 @@ Gate ja validado localmente:
 
 ### A1 - Jobs/outbox para o fluxo existente
 
+Status: fundacao tecnica iniciada localmente.
+
 Objetivo: criar a fundacao de processos pesados antes de transplantar Social e
 Sales.
 
@@ -291,6 +293,16 @@ Gate:
 - Job duplicado nao duplica efeito.
 - Metricas basicas de fila existem.
 - Teste cross-tenant cobrindo jobs e eventos.
+
+Entregue localmente em 2026-06-01:
+
+- Migration `003_jobs_outbox_foundation`.
+- Tabelas `jobs`, `job_attempts`, `outbox_events`, `webhook_events` e
+  `rate_limit_events`.
+- `JobQueueService` com enqueue idempotente, claim com `FOR UPDATE SKIP LOCKED`,
+  retry/backoff, dead-letter e metricas por tenant.
+- Runner Celery `labby.jobs.dispatch_due_jobs`.
+- Endpoint admin `GET /api/v2/labby/jobs/metrics`.
 
 ### A2 - Social atual transplantado
 

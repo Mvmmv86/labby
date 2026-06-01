@@ -23,11 +23,10 @@ Escopo desta fase:
 - Modelo base de identidade: `users`, `tenants`, `memberships`, `membership_modules`, `team_invites`.
 - Auth/memberships com JWT proprio, refresh token opaco e switch tenant.
 - Convites de equipe e permissoes por modulo.
+- Fundacao A1 de jobs/outbox/webhooks/rate limit com Postgres como fonte de verdade.
 
 Fora de escopo nesta fase:
 
-- Login funcional.
-- Convites funcionais.
 - Sales/Social.
 - Migracao de dados.
 
