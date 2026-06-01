@@ -104,6 +104,8 @@ def test_openai_responses_rewrite_client_parses_output_text(monkeypatch) -> None
         api_key="key",
         model="gpt-4o-mini",
         timeout_seconds=1,
+        input_cost_per_million_tokens=1.0,
+        output_cost_per_million_tokens=2.0,
     )
 
     result = client.rewrite_news_item(
@@ -120,5 +122,6 @@ def test_openai_responses_rewrite_client_parses_output_text(monkeypatch) -> None
     assert result.provider_response_id == "resp_123"
     assert result.input_tokens == 20
     assert result.output_tokens == 8
+    assert result.cost_usd == 0.000036
     assert calls[0][1]["json"]["model"] == "gpt-4o-mini"
     assert calls[0][1]["json"]["max_output_tokens"] == 700

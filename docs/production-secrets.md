@@ -39,6 +39,18 @@ Regras:
 - Workers devem ter pool separado da API quando rodarem como processos
   independentes.
 
+## Jobs
+
+- `LABBY_JOB_RUNNING_TIMEOUT_SECONDS`
+- `LABBY_JOB_REAPER_BATCH_SIZE`
+
+Regras:
+
+- `LABBY_JOB_RUNNING_TIMEOUT_SECONDS` define quando um job em `running` e
+  considerado travado e volta para retry ou dead-letter.
+- O reaper roda junto do dispatch de jobs e evita jobs presos depois de queda de
+  worker.
+
 ## Email
 
 - `LABBY_EMAIL_FROM`
@@ -64,6 +76,8 @@ Secrets previstos para as proximas fatias:
 - `LABBY_AI_MODEL_DEFAULT`
 - `LABBY_AI_BASE_URL`
 - `LABBY_AI_TIMEOUT_SECONDS`
+- `LABBY_AI_INPUT_COST_PER_MILLION_TOKENS`
+- `LABBY_AI_OUTPUT_COST_PER_MILLION_TOKENS`
 
 Regras:
 
@@ -75,6 +89,8 @@ Regras:
   deterministico.
 - `LABBY_AI_PROVIDER=openai` usa a Responses API da OpenAI com
   `LABBY_AI_API_KEY`; falhas do provider caem para fallback sem quebrar o job.
+- Custos por milhao de tokens devem ser configurados conforme o modelo ativo
+  para que `ai_cost_usd` seja util por tenant.
 
 ## GitHub
 

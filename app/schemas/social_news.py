@@ -152,6 +152,13 @@ class SocialNewsCurationRequest(BaseModel):
     rejection_reason: str | None = Field(default=None, max_length=2000)
 
 
+class SocialNewsStageDecisionRequest(BaseModel):
+    action: Literal["approve", "reject"]
+    motivo: str | None = Field(default=None, max_length=2000)
+    rewrite_on_approve: bool = True
+    idempotency_key: str | None = Field(default=None, max_length=180)
+
+
 class SocialNewsJobRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=180)
 
@@ -163,6 +170,43 @@ class SocialNewsJobResponse(BaseModel):
 class SocialNewsCurationResponse(BaseModel):
     item: SocialNewsItemResponse
     job: EnqueuedJobResponse | None = None
+
+
+class SocialNewsDispatchConfigResponse(BaseModel):
+    email_enabled: bool
+    from_email: str | None = None
+    resend_api_key_configured: bool
+
+
+class SocialNewsDispatchResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    run_id: UUID
+    subscriber_id: UUID
+    email_normalized: str
+    subject: str
+    status: str
+    idempotency_key: str
+    provider: str
+    provider_message_id: str | None = None
+    error_message: str | None = None
+    sent_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SocialNewsDispatchesResponse(BaseModel):
+    dispatches: list[SocialNewsDispatchResponse]
+
+
+class SocialNewsDispatchEnqueuedResponse(BaseModel):
+    run_id: UUID
+    sent: int
+    failed: int
+    skipped: int
+    subscribers: int
+    items: int
+    job: EnqueuedJobResponse
 
 
 class SocialNewsSubscriberCreate(BaseModel):

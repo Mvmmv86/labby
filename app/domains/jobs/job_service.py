@@ -54,6 +54,7 @@ class JobQueueService:
         priority: int = 0,
         max_attempts: int = 3,
         run_after: datetime | None = None,
+        commit: bool = True,
     ) -> JobRecord:
         row = self.db.execute(
             text(
@@ -97,7 +98,8 @@ class JobQueueService:
                 "run_after": run_after or datetime.now(UTC),
             },
         ).mappings().one()
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return _job_from_row(row)
 
     def claim_due_job(
@@ -297,6 +299,69 @@ class JobQueueService:
             )
             for row in rows
         ]
+
+    def requeue_stale_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        queue_name: str | None = None,
+        limit: int = 50,
+    ) -> list[JobRecord]:
+        queue_filter = "AND queue_name = :queue_name" if queue_name else ""
+        rows = self.db.execute(
+            text(
+                f"""
+                WITH stale_jobs AS (
+                  SELECT id
+                  FROM jobs
+                  WHERE status = 'running'
+                    AND locked_at IS NOT NULL
+                    AND locked_at < NOW() - (:stale_after_seconds * INTERVAL '1 second')
+                    {queue_filter}
+                  ORDER BY locked_at ASC, created_at ASC
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT :limit
+                )
+                UPDATE jobs j
+                SET status = CASE
+                        WHEN attempts >= max_attempts THEN 'dead_letter'
+                        ELSE 'retrying'
+                    END,
+                    run_after = NOW(),
+                    error_code = 'job_reaped',
+                    error_message = 'Job running timeout requeued by reaper',
+                    locked_at = NULL,
+                    locked_by = NULL,
+                    updated_at = NOW()
+                FROM stale_jobs
+                WHERE j.id = stale_jobs.id
+                RETURNING j.*
+                """
+            ),
+            {
+                "stale_after_seconds": max(1, stale_after_seconds),
+                "queue_name": queue_name,
+                "limit": max(1, limit),
+            },
+        ).mappings().all()
+        jobs = [_job_from_row(row) for row in rows]
+        for job in jobs:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE job_attempts
+                    SET status = 'failed',
+                        error_code = 'job_reaped',
+                        error_message = 'Job running timeout requeued by reaper',
+                        finished_at = NOW()
+                    WHERE job_id = :job_id
+                      AND status = 'running'
+                    """
+                ),
+                {"job_id": job.id},
+            )
+        self.db.commit()
+        return jobs
 
     def enqueue_outbox_event(
         self,

@@ -243,5 +243,30 @@ def test_approve_stage1_moves_item_and_enqueues_rewrite_job() -> None:
         "run_id": "55555555-5555-5555-5555-555555555555",
         "segment_id": "44444444-4444-4444-4444-444444444444",
     }
+    assert job_queue.calls[0]["commit"] is False
     assert "FOR UPDATE" in db.calls[0][0]
     assert "status = :status" in db.calls[1][0]
+
+
+def test_approve_stage1_can_skip_rewrite_enqueue_for_frontend_parity() -> None:
+    item_id = "77777777-7777-7777-7777-777777777777"
+    db = FakeSession(
+        [
+            FakeResult(row=make_item_row(status="ranked")),
+            FakeResult(row=make_item_row(status="approved_stage1")),
+            FakeResult(),
+        ]
+    )
+    job_queue = FakeJobQueue()
+    service = SocialNewsService(db=db, job_queue=job_queue)
+
+    item, job = service.approve_stage1(
+        current=make_current(),
+        item_id=item_id,
+        rewrite_on_approve=False,
+    )
+
+    assert item["status"] == "approved_stage1"
+    assert job is None
+    assert job_queue.calls == []
+    assert db.commits == 1

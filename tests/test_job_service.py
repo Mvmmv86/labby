@@ -92,6 +92,52 @@ def test_enqueue_job_uses_tenant_scoped_idempotency() -> None:
     assert db.commits == 1
 
 
+def test_enqueue_job_can_join_existing_transaction() -> None:
+    db = FakeSession(row=make_job_row())
+    service = JobQueueService(db)
+
+    service.enqueue_job(
+        tenant_id="tenant-1",
+        membership_id="member-1",
+        job_type="social.capture",
+        queue_name="social-ingestion",
+        idempotency_key="capture:tenant-1:2026-06-01",
+        payload={"source": "x"},
+        priority=10,
+        commit=False,
+    )
+
+    assert db.commits == 0
+
+
+def test_requeue_stale_running_jobs_marks_attempt_failed() -> None:
+    db = FakeSession(
+        rows=[
+            make_job_row(
+                status="retrying",
+                attempts=1,
+                locked_at=None,
+                locked_by=None,
+                error_code="job_reaped",
+            )
+        ]
+    )
+    service = JobQueueService(db)
+
+    jobs = service.requeue_stale_running_jobs(
+        stale_after_seconds=900,
+        queue_name="worker-ai",
+        limit=10,
+    )
+
+    assert len(jobs) == 1
+    assert jobs[0].status == "retrying"
+    assert "FOR UPDATE SKIP LOCKED" in db.calls[0][0]
+    assert "UPDATE job_attempts" in db.calls[1][0]
+    assert db.calls[1][1] == {"job_id": "job-1"}
+    assert db.commits == 1
+
+
 def test_queue_metrics_filters_by_tenant() -> None:
     db = FakeSession(
         rows=[
@@ -131,4 +177,3 @@ def test_record_webhook_event_is_tenant_provider_idempotent() -> None:
     assert params["tenant_id"] == "tenant-1"
     assert params["provider"] == "x"
     assert event_id == "webhook-1"
-

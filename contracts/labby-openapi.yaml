@@ -705,6 +705,365 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/stage1:
+    get:
+      tags:
+      - social-news
+      summary: List Curation Stage1 Items
+      operationId: list_curation_stage1_items_api_v2_labby_social_news_curation_stage1_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: run_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/stage2:
+    get:
+      tags:
+      - social-news
+      summary: List Curation Stage2 Items
+      operationId: list_curation_stage2_items_api_v2_labby_social_news_curation_stage2_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: run_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/ready:
+    get:
+      tags:
+      - social-news
+      summary: List Curation Ready Items
+      operationId: list_curation_ready_items_api_v2_labby_social_news_curation_ready_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: run_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/dispatch-config:
+    get:
+      tags:
+      - social-news
+      summary: Get Curation Dispatch Config
+      operationId: get_curation_dispatch_config_api_v2_labby_social_news_curation_dispatch_config_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsDispatchConfigResponse'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/social/news/curation/items/{item_id}/stage1:
+    post:
+      tags:
+      - social-news
+      summary: Decide Curation Stage1 Item
+      operationId: decide_curation_stage1_item_api_v2_labby_social_news_curation_items__item_id__stage1_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsStageDecisionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/items/{item_id}/rewrite:
+    post:
+      tags:
+      - social-news
+      summary: Rewrite Curation Item
+      operationId: rewrite_curation_item_api_v2_labby_social_news_curation_items__item_id__rewrite_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SocialNewsJobRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/items/{item_id}/stage2:
+    post:
+      tags:
+      - social-news
+      summary: Decide Curation Stage2 Item
+      operationId: decide_curation_stage2_item_api_v2_labby_social_news_curation_items__item_id__stage2_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsStageDecisionRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/runs/{run_id}/dispatch:
+    post:
+      tags:
+      - social-news
+      summary: Dispatch Curation Run
+      operationId: dispatch_curation_run_api_v2_labby_social_news_curation_runs__run_id__dispatch_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SocialNewsJobRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsDispatchEnqueuedResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/curation/dispatches:
+    get:
+      tags:
+      - social-news
+      summary: List Curation Dispatches
+      operationId: list_curation_dispatches_api_v2_labby_social_news_curation_dispatches_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: run_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsDispatchesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/social/news/runs/{run_id}/dispatch:
     post:
       tags:
@@ -1805,6 +2164,139 @@ components:
       required:
       - item
       title: SocialNewsCurationResponse
+    SocialNewsDispatchConfigResponse:
+      properties:
+        email_enabled:
+          type: boolean
+          title: Email Enabled
+        from_email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: From Email
+        resend_api_key_configured:
+          type: boolean
+          title: Resend Api Key Configured
+      type: object
+      required:
+      - email_enabled
+      - resend_api_key_configured
+      title: SocialNewsDispatchConfigResponse
+    SocialNewsDispatchEnqueuedResponse:
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          title: Run Id
+        sent:
+          type: integer
+          title: Sent
+        failed:
+          type: integer
+          title: Failed
+        skipped:
+          type: integer
+          title: Skipped
+        subscribers:
+          type: integer
+          title: Subscribers
+        items:
+          type: integer
+          title: Items
+        job:
+          $ref: '#/components/schemas/EnqueuedJobResponse'
+      type: object
+      required:
+      - run_id
+      - sent
+      - failed
+      - skipped
+      - subscribers
+      - items
+      - job
+      title: SocialNewsDispatchEnqueuedResponse
+    SocialNewsDispatchResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        run_id:
+          type: string
+          format: uuid
+          title: Run Id
+        subscriber_id:
+          type: string
+          format: uuid
+          title: Subscriber Id
+        email_normalized:
+          type: string
+          title: Email Normalized
+        subject:
+          type: string
+          title: Subject
+        status:
+          type: string
+          title: Status
+        idempotency_key:
+          type: string
+          title: Idempotency Key
+        provider:
+          type: string
+          title: Provider
+        provider_message_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Provider Message Id
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        sent_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Sent At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - run_id
+      - subscriber_id
+      - email_normalized
+      - subject
+      - status
+      - idempotency_key
+      - provider
+      - created_at
+      - updated_at
+      title: SocialNewsDispatchResponse
+    SocialNewsDispatchesResponse:
+      properties:
+        dispatches:
+          items:
+            $ref: '#/components/schemas/SocialNewsDispatchResponse'
+          type: array
+          title: Dispatches
+      type: object
+      required:
+      - dispatches
+      title: SocialNewsDispatchesResponse
     SocialNewsItemResponse:
       properties:
         id:
@@ -2366,6 +2858,34 @@ components:
       required:
       - sources
       title: SocialNewsSourcesResponse
+    SocialNewsStageDecisionRequest:
+      properties:
+        action:
+          type: string
+          enum:
+          - approve
+          - reject
+          title: Action
+        motivo:
+          anyOf:
+          - type: string
+            maxLength: 2000
+          - type: 'null'
+          title: Motivo
+        rewrite_on_approve:
+          type: boolean
+          title: Rewrite On Approve
+          default: true
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Idempotency Key
+      type: object
+      required:
+      - action
+      title: SocialNewsStageDecisionRequest
     SocialNewsSubscriberCreate:
       properties:
         email:

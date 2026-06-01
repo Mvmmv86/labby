@@ -1,6 +1,7 @@
 from typing import Any
 
 from app.core.celery_app import celery_app
+from app.core.config import get_settings
 from app.core.database import SessionLocal
 from app.domains.jobs.job_service import JobQueueService, JobRecord
 from app.domains.jobs.registry import (
@@ -19,7 +20,18 @@ def process_due_jobs(
     registry: JobHandlerRegistry = job_handlers,
     queue_name: str | None = None,
     limit: int = 10,
+    stale_after_seconds: int | None = None,
+    reaper_limit: int = 50,
 ) -> dict[str, int]:
+    reaped = 0
+    if stale_after_seconds is not None:
+        reaped_jobs = service.requeue_stale_running_jobs(
+            stale_after_seconds=stale_after_seconds,
+            queue_name=queue_name,
+            limit=reaper_limit,
+        )
+        reaped = len(reaped_jobs)
+
     processed = 0
     succeeded = 0
     retried = 0
@@ -84,6 +96,7 @@ def process_due_jobs(
             succeeded += 1
 
     return {
+        "reaped": reaped,
         "processed": processed,
         "succeeded": succeeded,
         "retried": retried,
@@ -98,6 +111,7 @@ def dispatch_due_jobs(
     limit: int = 10,
 ) -> dict[str, int]:
     worker_name = _worker_name(self.request)
+    settings = get_settings()
     with SessionLocal() as db:
         service = JobQueueService(db)
         return process_due_jobs(
@@ -105,6 +119,8 @@ def dispatch_due_jobs(
             worker_name=worker_name,
             queue_name=queue_name,
             limit=limit,
+            stale_after_seconds=settings.job_running_timeout_seconds,
+            reaper_limit=settings.job_reaper_batch_size,
         )
 
 

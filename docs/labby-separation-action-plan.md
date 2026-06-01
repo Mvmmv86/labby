@@ -323,6 +323,8 @@ Entregue localmente em 2026-06-01:
 - Endpoint admin `GET /api/v2/labby/jobs/metrics`.
 - Ajuste das migrations iniciais para gerar UUID no Postgres via
   `gen_random_uuid()`, necessario para inserts por SQL bruto.
+- Reaper de jobs presos em `running`, configuravel por
+  `LABBY_JOB_RUNNING_TIMEOUT_SECONDS` e `LABBY_JOB_REAPER_BATCH_SIZE`.
 
 ### A2 - Social atual transplantado
 
@@ -364,7 +366,8 @@ Entregue localmente em 2026-06-01:
   `social_news_curators`, `social_news_runs`, `social_news_items`,
   `social_news_subscribers`, `social_news_subscriber_consent_events` e
   `social_news_dispatches`.
-- Endpoints `/api/v2/labby/social/news/*`.
+- Endpoints `/api/v2/labby/social/news/*`, incluindo aliases
+  `/api/v2/labby/social/news/curation/*` compativeis com o frontend atual.
 - Runs, rewrite e dispatch criam jobs idempotentes no A1.
 - Handlers dos jobs `social.news.capture`, `social.news.rewrite` e
   `social.news.dispatch` registrados no worker.
@@ -372,9 +375,13 @@ Entregue localmente em 2026-06-01:
 - Captura X por worker com dedupe, ranking por engagement e persistencia em
   `social_news_items`.
 - Curadoria operacional com listagem de itens e aprovar/rejeitar stage 1/stage 2.
-- Aprovacao stage 1 enfileira rewrite idempotente em `worker-ai`.
+- Aprovacao stage 1 enfileira rewrite idempotente em `worker-ai` na mesma
+  transacao da mudanca de status.
 - Rewrite tenta IA standalone via OpenAI quando configurada por `LABBY_AI_*`,
   com fallback editorial seguro.
+- Rewrite idempotente no worker para evitar double-cost em retry/reaper.
+- Custo de IA calculado por tokens quando `LABBY_AI_*_COST_PER_MILLION_TOKENS`
+  esta configurado.
 - Dispatch Resend por worker com `social_news_dispatches`.
 - Subscribers com unsubscribe assinado e hash persistido.
 - Documento `docs/a2-social-current-handoff.md`.

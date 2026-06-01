@@ -27,12 +27,20 @@ Data: 2026-06-01
 - Dispatch por worker usando Resend via `EmailService.send_email`.
 - Subscribers com token de unsubscribe assinado e hash persistido.
 - Fila de curadoria por endpoints de listagem geral de itens.
+- Aliases de curadoria compativeis com o frontend atual em
+  `/api/v2/labby/social/news/curation/*`.
 - Aprovacao/rejeicao stage 1 e stage 2 com transicoes tenant-scoped.
-- Aprovacao stage 1 enfileira rewrite idempotente no `worker-ai`.
+- Aprovacao stage 1 enfileira rewrite idempotente no `worker-ai` na mesma
+  transacao de banco da mudanca de status.
 - Rewrite tenta IA standalone via OpenAI Responses API quando
   `LABBY_AI_PROVIDER=openai` e `LABBY_AI_API_KEY` estao configurados.
 - Rewrite mantém fallback editorial persistido se a IA estiver desabilitada,
   mal configurada ou indisponivel.
+- Rewrite ja persistido e tratado como idempotente no worker para evitar
+  double-cost em retry/reaper.
+- Custo de IA usa tokens retornados pelo provider e os configs
+  `LABBY_AI_INPUT_COST_PER_MILLION_TOKENS` e
+  `LABBY_AI_OUTPUT_COST_PER_MILLION_TOKENS`.
 - Testes de modelos, service e rotas.
 
 ## Contrato da fatia
@@ -51,6 +59,21 @@ Fluxo atual:
 - `social.news.capture` na fila `worker-social-ingestion`.
 - `social.news.rewrite` na fila `worker-ai`.
 - `social.news.dispatch` na fila `worker-email`.
+
+O dispatcher tambem roda um reaper para jobs presos em `running`, controlado por
+`LABBY_JOB_RUNNING_TIMEOUT_SECONDS` e `LABBY_JOB_REAPER_BATCH_SIZE`.
+
+## Contrato compativel com frontend atual
+
+- `GET /api/v2/labby/social/news/curation/stage1`
+- `GET /api/v2/labby/social/news/curation/stage2`
+- `GET /api/v2/labby/social/news/curation/ready`
+- `GET /api/v2/labby/social/news/curation/dispatch-config`
+- `POST /api/v2/labby/social/news/curation/items/{item_id}/stage1`
+- `POST /api/v2/labby/social/news/curation/items/{item_id}/rewrite`
+- `POST /api/v2/labby/social/news/curation/items/{item_id}/stage2`
+- `POST /api/v2/labby/social/news/curation/runs/{run_id}/dispatch`
+- `GET /api/v2/labby/social/news/curation/dispatches`
 
 ## Proxima fatia
 

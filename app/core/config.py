@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     ai_model_default: str = "gpt-4o-mini"
     ai_base_url: str = "https://api.openai.com/v1"
     ai_timeout_seconds: float = 30.0
+    ai_input_cost_per_million_tokens: float = 0.0
+    ai_output_cost_per_million_tokens: float = 0.0
+    job_running_timeout_seconds: int = 900
+    job_reaper_batch_size: int = 50
     social_news_capture_lookback_hours: int = 24
     social_news_max_source_requests_per_run: int = 10
     social_news_posts_per_source: int = 20

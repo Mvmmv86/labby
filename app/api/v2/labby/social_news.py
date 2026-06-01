@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.dependencies import CurrentMembership, get_current_membership
 from app.domains.jobs.job_service import JobQueueService, JobRecord
@@ -9,6 +10,10 @@ from app.schemas.social_news import (
     EnqueuedJobResponse,
     SocialNewsCurationRequest,
     SocialNewsCurationResponse,
+    SocialNewsDispatchConfigResponse,
+    SocialNewsDispatchEnqueuedResponse,
+    SocialNewsDispatchesResponse,
+    SocialNewsDispatchResponse,
     SocialNewsItemResponse,
     SocialNewsItemsResponse,
     SocialNewsJobRequest,
@@ -23,6 +28,7 @@ from app.schemas.social_news import (
     SocialNewsSourceCreate,
     SocialNewsSourceResponse,
     SocialNewsSourcesResponse,
+    SocialNewsStageDecisionRequest,
     SocialNewsSubscriberCreate,
     SocialNewsSubscriberCreatedResponse,
     SocialNewsSubscriberResponse,
@@ -190,6 +196,172 @@ def list_items(
         offset=offset,
     )
     return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+
+
+@router.get("/curation/stage1", response_model=SocialNewsItemsResponse)
+def list_curation_stage1_items(
+    segment_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemsResponse:
+    rows = service.list_items(
+        current=current,
+        segment_id=segment_id,
+        run_id=run_id,
+        status="ranked",
+        limit=limit,
+        offset=offset,
+    )
+    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+
+
+@router.get("/curation/stage2", response_model=SocialNewsItemsResponse)
+def list_curation_stage2_items(
+    segment_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemsResponse:
+    rows = service.list_items(
+        current=current,
+        segment_id=segment_id,
+        run_id=run_id,
+        status="rewritten",
+        limit=limit,
+        offset=offset,
+    )
+    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+
+
+@router.get("/curation/ready", response_model=SocialNewsItemsResponse)
+def list_curation_ready_items(
+    segment_id: str | None = Query(default=None),
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemsResponse:
+    rows = service.list_items(
+        current=current,
+        segment_id=segment_id,
+        run_id=run_id,
+        status="approved_stage2",
+        limit=limit,
+        offset=offset,
+    )
+    return SocialNewsItemsResponse(items=[SocialNewsItemResponse(**row) for row in rows])
+
+
+@router.get("/curation/dispatch-config", response_model=SocialNewsDispatchConfigResponse)
+def get_curation_dispatch_config(
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsDispatchConfigResponse:
+    service._assert_social_media_access(current)
+    settings = get_settings()
+    from_email = settings.email_from.strip()
+    return SocialNewsDispatchConfigResponse(
+        email_enabled=bool(settings.resend_api_key and from_email),
+        from_email=from_email or None,
+        resend_api_key_configured=bool(settings.resend_api_key),
+    )
+
+
+@router.post("/curation/items/{item_id}/stage1", response_model=SocialNewsItemResponse)
+def decide_curation_stage1_item(
+    item_id: str,
+    data: SocialNewsStageDecisionRequest,
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemResponse:
+    if data.action == "reject":
+        item = service.reject_stage1(
+            current=current,
+            item_id=item_id,
+            rejection_reason=data.motivo,
+        )
+        return SocialNewsItemResponse(**item)
+
+    item, _job = service.approve_stage1(
+        current=current,
+        item_id=item_id,
+        idempotency_key=data.idempotency_key,
+        rewrite_on_approve=data.rewrite_on_approve,
+    )
+    return SocialNewsItemResponse(**item)
+
+
+@router.post("/curation/items/{item_id}/rewrite", response_model=SocialNewsItemResponse)
+def rewrite_curation_item(
+    item_id: str,
+    data: SocialNewsJobRequest | None = None,
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemResponse:
+    service.enqueue_rewrite(
+        current=current,
+        item_id=item_id,
+        idempotency_key=data.idempotency_key if data else None,
+    )
+    item = service.get_item(current=current, item_id=item_id)
+    return SocialNewsItemResponse(**item)
+
+
+@router.post("/curation/items/{item_id}/stage2", response_model=SocialNewsItemResponse)
+def decide_curation_stage2_item(
+    item_id: str,
+    data: SocialNewsStageDecisionRequest,
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsItemResponse:
+    if data.action == "reject":
+        item = service.reject_stage2(
+            current=current,
+            item_id=item_id,
+            rejection_reason=data.motivo,
+        )
+        return SocialNewsItemResponse(**item)
+
+    item = service.approve_stage2(current=current, item_id=item_id)
+    return SocialNewsItemResponse(**item)
+
+
+@router.post("/curation/runs/{run_id}/dispatch", response_model=SocialNewsDispatchEnqueuedResponse)
+def dispatch_curation_run(
+    run_id: str,
+    data: SocialNewsJobRequest | None = None,
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsDispatchEnqueuedResponse:
+    job = service.enqueue_dispatch(
+        current=current,
+        run_id=run_id,
+        idempotency_key=data.idempotency_key if data else None,
+    )
+    preview = service.dispatch_preview(current=current, run_id=run_id)
+    return SocialNewsDispatchEnqueuedResponse(
+        **preview,
+        job=_job_response(job),
+    )
+
+
+@router.get("/curation/dispatches", response_model=SocialNewsDispatchesResponse)
+def list_curation_dispatches(
+    run_id: str | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+    current: CurrentMembership = Depends(get_current_membership),
+    service: SocialNewsService = Depends(get_social_news_service),
+) -> SocialNewsDispatchesResponse:
+    rows = service.list_dispatches(current=current, run_id=run_id, limit=limit)
+    return SocialNewsDispatchesResponse(
+        dispatches=[SocialNewsDispatchResponse(**row) for row in rows]
+    )
 
 
 @router.post("/runs/{run_id}/dispatch", response_model=SocialNewsJobResponse)

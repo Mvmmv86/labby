@@ -75,11 +75,15 @@ class OpenAIResponsesRewriteClient:
         api_key: str,
         model: str,
         timeout_seconds: float,
+        input_cost_per_million_tokens: float = 0.0,
+        output_cost_per_million_tokens: float = 0.0,
         base_url: str = "https://api.openai.com/v1",
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.timeout_seconds = timeout_seconds
+        self.input_cost_per_million_tokens = max(input_cost_per_million_tokens, 0.0)
+        self.output_cost_per_million_tokens = max(output_cost_per_million_tokens, 0.0)
         self.base_url = base_url.rstrip("/")
 
     def rewrite_news_item(
@@ -134,13 +138,21 @@ class OpenAIResponsesRewriteClient:
             raise AITemporaryError("Provider IA retornou resposta vazia")
 
         usage = data.get("usage") or {}
+        input_tokens = _int_or_none(usage.get("input_tokens"))
+        output_tokens = _int_or_none(usage.get("output_tokens"))
         return AIRewriteResult(
             content=content,
             model=str(data.get("model") or self.model),
             provider="openai",
             provider_response_id=str(data.get("id")) if data.get("id") else None,
-            input_tokens=_int_or_none(usage.get("input_tokens")),
-            output_tokens=_int_or_none(usage.get("output_tokens")),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=_estimate_cost_usd(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                input_cost_per_million_tokens=self.input_cost_per_million_tokens,
+                output_cost_per_million_tokens=self.output_cost_per_million_tokens,
+            ),
         )
 
 
@@ -156,6 +168,8 @@ def make_ai_rewrite_client(settings: Settings) -> AIRewriteClient:
         api_key=settings.ai_api_key,
         model=settings.ai_model_default,
         timeout_seconds=settings.ai_timeout_seconds,
+        input_cost_per_million_tokens=settings.ai_input_cost_per_million_tokens,
+        output_cost_per_million_tokens=settings.ai_output_cost_per_million_tokens,
         base_url=settings.ai_base_url,
     )
 
@@ -220,3 +234,15 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _estimate_cost_usd(
+    *,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    input_cost_per_million_tokens: float,
+    output_cost_per_million_tokens: float,
+) -> float:
+    input_cost = (input_tokens or 0) * input_cost_per_million_tokens / 1_000_000
+    output_cost = (output_tokens or 0) * output_cost_per_million_tokens / 1_000_000
+    return round(input_cost + output_cost, 8)

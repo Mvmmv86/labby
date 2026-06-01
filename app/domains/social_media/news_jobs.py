@@ -146,11 +146,19 @@ class SocialNewsJobProcessor:
     def rewrite(self, context: JobExecutionContext) -> dict[str, Any]:
         item_id = self._payload_id(context, "item_id")
         item = self._get_item_with_segment(context.tenant_id, item_id)
+        if item["status"] == "rewritten":
+            return {
+                "item_id": item_id,
+                "status": "rewritten",
+                "model": item.get("rewritten_model"),
+                "provider": "existing",
+                "skipped": True,
+            }
         if item["status"] not in {"approved_stage1", "rewritten"}:
             raise PermanentJobError("Item precisa estar aprovado no stage 1")
 
         result = self._rewrite_with_provider(item)
-        self.db.execute(
+        updated = self.db.execute(
             text(
                 """
                 UPDATE social_news_items
@@ -161,6 +169,8 @@ class SocialNewsJobProcessor:
                     updated_at = NOW()
                 WHERE tenant_id = :tenant_id
                   AND id = :item_id
+                  AND status = 'approved_stage1'
+                RETURNING run_id
                 """
             ),
             {
@@ -169,29 +179,30 @@ class SocialNewsJobProcessor:
                 "content": result.content,
                 "model": result.model,
             },
-        )
-        self.db.execute(
-            text(
-                """
-                UPDATE social_news_runs
-                SET status = CASE
-                        WHEN status IN ('queued', 'capturing', 'curation_stage1', 'rewriting')
-                        THEN 'curation_stage2'
-                        ELSE status
-                    END,
-                    ai_cost_usd = ai_cost_usd + :ai_cost_usd,
-                    estimated_cost_usd = estimated_cost_usd + :ai_cost_usd,
-                    updated_at = NOW()
-                WHERE tenant_id = :tenant_id
-                  AND id = :run_id
-                """
-            ),
-            {
-                "tenant_id": context.tenant_id,
-                "run_id": str(item["run_id"]),
-                "ai_cost_usd": result.cost_usd,
-            },
-        )
+        ).mappings().first()
+        if updated:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE social_news_runs
+                    SET status = CASE
+                            WHEN status IN ('queued', 'capturing', 'curation_stage1', 'rewriting')
+                            THEN 'curation_stage2'
+                            ELSE status
+                        END,
+                        ai_cost_usd = ai_cost_usd + :ai_cost_usd,
+                        estimated_cost_usd = estimated_cost_usd + :ai_cost_usd,
+                        updated_at = NOW()
+                    WHERE tenant_id = :tenant_id
+                      AND id = :run_id
+                    """
+                ),
+                {
+                    "tenant_id": context.tenant_id,
+                    "run_id": str(item["run_id"]),
+                    "ai_cost_usd": result.cost_usd,
+                },
+            )
         self.db.commit()
         return {
             "item_id": item_id,
@@ -201,6 +212,7 @@ class SocialNewsJobProcessor:
             "provider_response_id": result.provider_response_id,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
+            "skipped": not bool(updated),
         }
 
     def dispatch(self, context: JobExecutionContext) -> dict[str, Any]:
@@ -754,14 +766,6 @@ class SocialNewsJobProcessor:
                 external_url=str(item.get("external_url") or "") or None,
                 author_handle=str(item.get("author_handle") or "") or None,
             )
-
-    def _fallback_rewrite(self, item: dict[str, Any]) -> str:
-        author = html.escape(str(item.get("author_handle") or "fonte"))
-        text_value = html.escape(str(item.get("original_content") or "")[:800])
-        url = html.escape(str(item.get("external_url") or ""))
-        disclaimer = str(item.get("disclaimer") or "").strip()
-        suffix = f"\n\n{disclaimer}" if disclaimer else ""
-        return f"**Atualizacao de @{author}.** {text_value}\n\nFonte: {url}{suffix}"
 
     def _subject(self, run: dict[str, Any], items: list[dict[str, Any]]) -> str:
         segment = run.get("segment_name") or "Noticias"

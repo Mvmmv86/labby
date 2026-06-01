@@ -11,6 +11,16 @@ class FakeJobService:
         self.jobs = jobs
         self.completed = []
         self.failed = []
+        self.reaped = []
+
+    def requeue_stale_running_jobs(
+        self,
+        *,
+        stale_after_seconds: int,
+        queue_name: str | None = None,
+        limit: int = 50,
+    ):
+        return self.reaped
 
     def claim_due_job(self, *, worker_name: str, queue_name: str | None = None):
         if not self.jobs:
@@ -74,7 +84,7 @@ def test_process_due_jobs_runs_handler_and_completes_job() -> None:
 
     result = process_due_jobs(service=service, worker_name="worker-1", registry=registry)
 
-    assert result == {"processed": 1, "succeeded": 1, "retried": 0, "dead_letter": 0}
+    assert result == {"reaped": 0, "processed": 1, "succeeded": 1, "retried": 0, "dead_letter": 0}
     assert service.completed == [("job-1", "attempt-job-1", {"ok": True})]
 
 
@@ -89,7 +99,7 @@ def test_process_due_jobs_retries_retryable_errors() -> None:
 
     result = process_due_jobs(service=service, worker_name="worker-1", registry=registry)
 
-    assert result == {"processed": 1, "succeeded": 0, "retried": 1, "dead_letter": 0}
+    assert result == {"reaped": 0, "processed": 1, "succeeded": 0, "retried": 1, "dead_letter": 0}
     assert service.failed[0][2] == "RetryableJobError"
     assert service.failed[0][4] is False
 
@@ -103,7 +113,22 @@ def test_process_due_jobs_dead_letters_missing_handler() -> None:
         registry=JobHandlerRegistry(),
     )
 
-    assert result == {"processed": 1, "succeeded": 0, "retried": 0, "dead_letter": 1}
+    assert result == {"reaped": 0, "processed": 1, "succeeded": 0, "retried": 0, "dead_letter": 1}
     assert service.failed[0][2] == "handler_not_found"
     assert service.failed[0][4] is True
 
+
+def test_process_due_jobs_reaps_stale_running_jobs_before_claiming() -> None:
+    registry = JobHandlerRegistry()
+    service = FakeJobService([])
+    service.reaped = [make_job(job_id="stale-job", job_type="test.stale")]
+
+    result = process_due_jobs(
+        service=service,
+        worker_name="worker-1",
+        registry=registry,
+        stale_after_seconds=900,
+        reaper_limit=10,
+    )
+
+    assert result == {"reaped": 1, "processed": 0, "succeeded": 0, "retried": 0, "dead_letter": 0}
