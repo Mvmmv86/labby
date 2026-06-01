@@ -17,9 +17,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     op.create_table(
         "users",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("nome", sa.String(length=160), nullable=False),
         sa.Column("email_normalized", sa.String(length=320), nullable=False),
         sa.Column("senha_hash", sa.Text(), nullable=False),
@@ -44,7 +50,12 @@ def upgrade() -> None:
 
     op.create_table(
         "tenants",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("nome", sa.String(length=180), nullable=False),
         sa.Column("slug", sa.String(length=120), nullable=False),
         sa.Column("plano", sa.String(length=40), server_default="trial", nullable=False),
@@ -74,7 +85,12 @@ def upgrade() -> None:
 
     op.create_table(
         "memberships",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("role", sa.String(length=20), nullable=False),
@@ -137,7 +153,12 @@ def upgrade() -> None:
 
     op.create_table(
         "team_invites",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("invited_by_membership_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("email_normalized", sa.String(length=320), nullable=False),

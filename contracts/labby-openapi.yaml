@@ -1,890 +1,2499 @@
 openapi: 3.1.0
 info:
-  title: Labby API Contract
+  title: Labby API
   version: 0.1.0
-  description: Contrato inicial da F1. Deve ser expandido antes de cada fase funcional.
-servers:
-  - url: https://api.labby.com.br
-  - url: http://localhost:8000
+  description: Contrato Labby gerado a partir da API FastAPI.
 paths:
   /health:
     get:
-      tags: [health]
-      summary: Root healthcheck
+      tags:
+      - health
+      summary: Root Health
+      operationId: root_health_health_get
       responses:
-        "200":
-          description: Service status
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthResponse"
+                additionalProperties:
+                  type: string
+                type: object
+                title: Response Root Health Health Get
   /healthz:
     get:
-      tags: [health]
-      summary: Root readiness check touching DB and Redis
+      tags:
+      - health
+      summary: Readiness Health
+      operationId: readiness_health_healthz_get
       responses:
-        "200":
-          description: Dependencies are ready
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ReadinessResponse"
-        "503":
-          description: One or more dependencies are unavailable
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadinessResponse"
-  /api/v2/labby/health:
-    get:
-      tags: [health]
-      summary: Labby API healthcheck
-      responses:
-        "200":
-          description: Service status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-  /api/v2/labby/healthz:
-    get:
-      tags: [health]
-      summary: Labby API readiness check touching DB and Redis
-      responses:
-        "200":
-          description: Dependencies are ready
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadinessResponse"
-        "503":
-          description: One or more dependencies are unavailable
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ReadinessResponse"
-  /api/v2/labby/jobs/metrics:
-    get:
-      tags: [jobs]
-      summary: Tenant-scoped job queue metrics
-      responses:
-        "200":
-          description: Queue metrics grouped by queue and status
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/JobMetricsResponse"
-        "403":
-          description: Admin role required
-  /api/v2/labby/auth/login:
-    post:
-      tags: [auth]
-      summary: Login with default membership
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/LoginRequest"
-      responses:
-        "200":
-          description: Auth response
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthResponse"
+                additionalProperties: true
+                type: object
+                title: Response Readiness Health Healthz Get
   /api/v2/labby/auth/register:
     post:
-      tags: [auth]
-      summary: Create user, tenant and owner membership
+      tags:
+      - auth
+      summary: Register
+      operationId: register_api_v2_labby_auth_register_post
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RegisterRequest"
+              $ref: '#/components/schemas/RegisterRequest'
+        required: true
       responses:
-        "200":
-          description: Auth response
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/auth/login:
+    post:
+      tags:
+      - auth
+      summary: Login
+      operationId: login_api_v2_labby_auth_login_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/auth/refresh:
     post:
-      tags: [auth]
-      summary: Rotate refresh token and issue a new access token
-      requestBody:
+      tags:
+      - auth
+      summary: Refresh
+      operationId: refresh_api_v2_labby_auth_refresh_post
+      parameters:
+      - name: labby_refresh_token
+        in: cookie
         required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Labby Refresh Token
+      requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RefreshRequest"
+              anyOf:
+              - $ref: '#/components/schemas/RefreshRequest'
+              - type: 'null'
+              title: Data
       responses:
-        "200":
-          description: Auth response
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/auth/logout:
     post:
-      tags: [auth]
-      summary: Revoke the current refresh session
-      requestBody:
+      tags:
+      - auth
+      summary: Logout
+      operationId: logout_api_v2_labby_auth_logout_post
+      parameters:
+      - name: labby_refresh_token
+        in: cookie
         required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Labby Refresh Token
+      requestBody:
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/RefreshRequest"
+              anyOf:
+              - $ref: '#/components/schemas/RefreshRequest'
+              - type: 'null'
+              title: Data
       responses:
-        "204":
-          description: Logged out
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/auth/me:
     get:
-      tags: [auth]
-      summary: Current user, active tenant and available memberships
+      tags:
+      - auth
+      summary: Me
+      operationId: me_api_v2_labby_auth_me_get
       responses:
-        "200":
-          description: Current identity
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MeResponse"
+                $ref: '#/components/schemas/MeResponse'
+      security:
+      - HTTPBearer: []
   /api/v2/labby/auth/switch-tenant:
     post:
-      tags: [auth]
-      summary: Switch active membership
+      tags:
+      - auth
+      summary: Switch Tenant
+      operationId: switch_tenant_api_v2_labby_auth_switch_tenant_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: labby_refresh_token
+        in: cookie
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Labby Refresh Token
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/SwitchTenantRequest"
+              $ref: '#/components/schemas/SwitchTenantRequest'
       responses:
-        "200":
-          description: Auth response
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/auth/forgot-password:
     post:
-      tags: [auth]
-      summary: Request password reset
+      tags:
+      - auth
+      summary: Forgot Password
+      operationId: forgot_password_api_v2_labby_auth_forgot_password_post
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ForgotPasswordRequest"
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+        required: true
       responses:
-        "204":
-          description: Reset requested
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/auth/reset-password:
     post:
-      tags: [auth]
-      summary: Complete password reset
+      tags:
+      - auth
+      summary: Reset Password
+      operationId: reset_password_api_v2_labby_auth_reset_password_post
       requestBody:
-        required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ResetPasswordRequest"
+              $ref: '#/components/schemas/ResetPasswordRequest'
+        required: true
       responses:
-        "204":
-          description: Password reset
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/health:
+    get:
+      tags:
+      - health
+      summary: Health
+      operationId: health_api_v2_labby_health_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /api/v2/labby/healthz:
+    get:
+      tags:
+      - health
+      summary: Readiness
+      operationId: readiness_api_v2_labby_healthz_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+  /api/v2/labby/jobs/metrics:
+    get:
+      tags:
+      - jobs
+      summary: Queue Metrics
+      operationId: queue_metrics_api_v2_labby_jobs_metrics_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobMetricsResponse'
+      security:
+      - HTTPBearer: []
   /api/v2/labby/modules/:
     get:
-      tags: [modules]
-      summary: Current membership modules
+      tags:
+      - modules
+      summary: Current Modules
+      operationId: current_modules_api_v2_labby_modules__get
       responses:
-        "200":
-          description: Module list
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/CurrentModulesResponse"
+                $ref: '#/components/schemas/CurrentModulesResponse'
+      security:
+      - HTTPBearer: []
   /api/v2/labby/modules/users:
     get:
-      tags: [modules]
-      summary: List tenant users and module access
+      tags:
+      - modules
+      summary: List User Modules
+      operationId: list_user_modules_api_v2_labby_modules_users_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
       responses:
-        "200":
-          description: User module list
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UserModulesResponse"
+                $ref: '#/components/schemas/UserModulesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/modules/users/{user_id}:
     patch:
-      tags: [modules]
-      summary: Update user modules in the active tenant
+      tags:
+      - modules
+      summary: Update User Modules
+      operationId: update_user_modules_api_v2_labby_modules_users__user_id__patch
+      security:
+      - HTTPBearer: []
       parameters:
-        - name: user_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - name: user_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: User Id
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/UpdateUserModulesRequest"
+              $ref: '#/components/schemas/UpdateUserModulesRequest'
       responses:
-        "200":
-          description: Updated module access
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UpdateUserModulesResponse"
+                $ref: '#/components/schemas/UpdateUserModulesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments:
+    get:
+      tags:
+      - social-news
+      summary: List Segments
+      operationId: list_segments_api_v2_labby_social_news_segments_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSegmentsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - social-news
+      summary: Create Segment
+      operationId: create_segment_api_v2_labby_social_news_segments_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSegmentCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSegmentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/{segment_id}/sources:
+    get:
+      tags:
+      - social-news
+      summary: List Sources
+      operationId: list_sources_api_v2_labby_social_news_segments__segment_id__sources_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSourcesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - social-news
+      summary: Add Source
+      operationId: add_source_api_v2_labby_social_news_segments__segment_id__sources_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSourceCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSourceResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/runs:
+    post:
+      tags:
+      - social-news
+      summary: Start Run
+      operationId: start_run_api_v2_labby_social_news_runs_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsRunCreate'
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsRunCreatedResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - social-news
+      summary: List Runs
+      operationId: list_runs_api_v2_labby_social_news_runs_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsRunsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/runs/{run_id}/items:
+    get:
+      tags:
+      - social-news
+      summary: List Run Items
+      operationId: list_run_items_api_v2_labby_social_news_runs__run_id__items_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/runs/{run_id}/dispatch:
+    post:
+      tags:
+      - social-news
+      summary: Enqueue Dispatch
+      operationId: enqueue_dispatch_api_v2_labby_social_news_runs__run_id__dispatch_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsJobRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsJobResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items/{item_id}/rewrite:
+    post:
+      tags:
+      - social-news
+      summary: Enqueue Rewrite
+      operationId: enqueue_rewrite_api_v2_labby_social_news_items__item_id__rewrite_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsJobRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsJobResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/{segment_id}/subscribers:
+    get:
+      tags:
+      - social-news
+      summary: List Subscribers
+      operationId: list_subscribers_api_v2_labby_social_news_segments__segment_id__subscribers_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSubscribersResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - social-news
+      summary: Create Subscriber
+      operationId: create_subscriber_api_v2_labby_social_news_segments__segment_id__subscribers_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSubscriberCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSubscriberCreatedResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/unsubscribe/{token}:
+    post:
+      tags:
+      - social-news
+      summary: Unsubscribe
+      operationId: unsubscribe_api_v2_labby_social_news_unsubscribe__token__post
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsUnsubscribeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/team/invites:
     get:
-      tags: [team]
-      summary: List team invites
+      tags:
+      - team
+      summary: List Invites
+      operationId: list_invites_api_v2_labby_team_invites_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
       responses:
-        "200":
-          description: Invite list
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TeamInvitesResponse"
+                $ref: '#/components/schemas/TeamInvitesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
     post:
-      tags: [team]
-      summary: Create team invite
+      tags:
+      - team
+      summary: Create Invite
+      operationId: create_invite_api_v2_labby_team_invites_post
+      security:
+      - HTTPBearer: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/CreateTeamInviteRequest"
+              $ref: '#/components/schemas/CreateTeamInviteRequest'
       responses:
-        "201":
-          description: Invite created
+        '201':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InviteMutationResponse"
+                $ref: '#/components/schemas/InviteMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/team/invites/{invite_id}/resend:
     post:
-      tags: [team]
-      summary: Resend invite
+      tags:
+      - team
+      summary: Resend Invite
+      operationId: resend_invite_api_v2_labby_team_invites__invite_id__resend_post
+      security:
+      - HTTPBearer: []
       parameters:
-        - name: invite_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - name: invite_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invite Id
       responses:
-        "200":
-          description: Invite resent
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/InviteMutationResponse"
+                $ref: '#/components/schemas/InviteMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/team/invites/{invite_id}/revoke:
     post:
-      tags: [team]
-      summary: Revoke invite
+      tags:
+      - team
+      summary: Revoke Invite
+      operationId: revoke_invite_api_v2_labby_team_invites__invite_id__revoke_post
+      security:
+      - HTTPBearer: []
       parameters:
-        - name: invite_id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
+      - name: invite_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Invite Id
       responses:
-        "200":
-          description: Invite revoked
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
                 type: object
-                required: [invite]
-                properties:
-                  invite:
-                    $ref: "#/components/schemas/LabbyTeamInvite"
-  /api/v2/labby/team/invites/accept/{token}:
-    get:
-      tags: [team]
-      summary: Preview public invite
-      parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: Public invite
+                additionalProperties: true
+                title: Response Revoke Invite Api V2 Labby Team Invites  Invite Id  Revoke
+                  Post
+        '422':
+          description: Validation Error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PublicTeamInvite"
-    post:
-      tags: [team]
-      summary: Accept public invite
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/team/invites/accept/{token}:
+    get:
+      tags:
+      - team
+      summary: Public Invite
+      operationId: public_invite_api_v2_labby_team_invites_accept__token__get
       parameters:
-        - name: token
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicTeamInvite'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - team
+      summary: Accept Invite
+      operationId: accept_invite_api_v2_labby_team_invites_accept__token__post
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/AcceptTeamInviteRequest"
+              $ref: '#/components/schemas/AcceptTeamInviteRequest'
       responses:
-        "200":
-          description: Auth response
+        '200':
+          description: Successful Response
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/AuthResponse"
-  /api/v2/labby/contacts/:
-    get:
-      tags: [sales]
-      summary: Flat alias for sales contacts list
-      responses:
-        "200":
-          description: Contacts list
-    post:
-      tags: [sales]
-      summary: Flat alias for create contact
-      responses:
-        "201":
-          description: Contact created
-  /api/v2/labby/contacts/{contact_id}:
-    get:
-      tags: [sales]
-      summary: Flat alias for contact detail
-      parameters:
-        - name: contact_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Contact detail
-    put:
-      tags: [sales]
-      summary: Flat alias for update contact
-      parameters:
-        - name: contact_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "200":
-          description: Contact updated
-    delete:
-      tags: [sales]
-      summary: Flat alias for delete contact
-      parameters:
-        - name: contact_id
-          in: path
-          required: true
-          schema:
-            type: integer
-      responses:
-        "204":
-          description: Contact deleted
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
-    HealthResponse:
-      type: object
-      required: [status, service, environment]
+    AcceptTeamInviteRequest:
       properties:
-        status:
-          type: string
-        service:
-          type: string
-        environment:
-          type: string
-    DependencyHealth:
-      type: object
-      required: [ok, error]
-      properties:
-        ok:
-          type: boolean
-        error:
-          type:
-            - string
-            - "null"
-    ReadinessResponse:
-      allOf:
-        - $ref: "#/components/schemas/HealthResponse"
-        - type: object
-          required: [dependencies]
-          properties:
-            dependencies:
-              type: object
-              additionalProperties:
-                $ref: "#/components/schemas/DependencyHealth"
-    JobQueueMetricResponse:
-      type: object
-      required: [queue_name, status, count]
-      properties:
-        queue_name:
-          type: string
-        status:
-          type: string
-          enum: [pending, retrying, running, succeeded, dead_letter, cancelled]
-        count:
-          type: integer
-    JobMetricsResponse:
-      type: object
-      required: [metrics]
-      properties:
-        metrics:
-          type: array
-          items:
-            $ref: "#/components/schemas/JobQueueMetricResponse"
-    LabbyModule:
-      type: object
-      required: [key, label, description, accent, accent_bright]
-      properties:
-        key:
-          type: string
-          enum: [sales, social_media]
-        label:
-          type: string
-        description:
-          type: string
-        accent:
-          type: string
-        accent_bright:
-          type: string
-    LoginRequest:
-      type: object
-      required: [email, senha]
-      properties:
-        email:
-          type: string
-          format: email
         senha:
           type: string
-    RegisterRequest:
-      type: object
-      required: [nome, email, senha, empresa]
-      properties:
-        nome:
-          type: string
-        email:
-          type: string
-          format: email
-        senha:
-          type: string
+          maxLength: 128
           minLength: 8
-        empresa:
-          type: string
-        telefone:
-          type: string
-    AuthResponse:
+          title: Senha
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 160
+          - type: 'null'
+          title: Nome
       type: object
-      required: [access_token, token_type, user, tenant]
+      required:
+      - senha
+      title: AcceptTeamInviteRequest
+    AuthResponse:
       properties:
         access_token:
           type: string
+          title: Access Token
         token_type:
           type: string
-          enum: [bearer]
+          title: Token Type
         user:
-          $ref: "#/components/schemas/UserResponse"
+          $ref: '#/components/schemas/UserResponse'
         tenant:
-          $ref: "#/components/schemas/TenantResponse"
-    UserResponse:
+          $ref: '#/components/schemas/TenantResponse'
       type: object
-      required: [id, tenant_id, nome, email, role]
+      required:
+      - access_token
+      - token_type
+      - user
+      - tenant
+      title: AuthResponse
+    CreateTeamInviteRequest:
       properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
         nome:
           type: string
+          maxLength: 160
+          minLength: 1
+          title: Nome
         email:
           type: string
           format: email
-        avatar_url:
-          type:
-            - string
-            - "null"
+          title: Email
         role:
           type: string
-          enum: [owner, admin, agent, viewer]
-    TenantResponse:
+          title: Role
+        module_keys:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Module Keys
+        default_module:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Default Module
       type: object
-      required: [id, nome, slug, plano, ativo, modules, default_module]
+      required:
+      - nome
+      - email
+      - role
+      - module_keys
+      title: CreateTeamInviteRequest
+    CurrentModulesResponse:
+      properties:
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
+        default_module:
+          type: string
+          title: Default Module
+      type: object
+      required:
+      - modules
+      - default_module
+      title: CurrentModulesResponse
+    DependencyHealth:
+      properties:
+        ok:
+          type: boolean
+          title: Ok
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+      type: object
+      required:
+      - ok
+      title: DependencyHealth
+    EnqueuedJobResponse:
       properties:
         id:
           type: string
           format: uuid
+          title: Id
+        job_type:
+          type: string
+          title: Job Type
+        queue_name:
+          type: string
+          title: Queue Name
+        status:
+          type: string
+          title: Status
+        idempotency_key:
+          type: string
+          title: Idempotency Key
+      type: object
+      required:
+      - id
+      - job_type
+      - queue_name
+      - status
+      - idempotency_key
+      title: EnqueuedJobResponse
+    ForgotPasswordRequest:
+      properties:
+        email:
+          type: string
+          format: email
+          title: Email
+      type: object
+      required:
+      - email
+      title: ForgotPasswordRequest
+    HTTPValidationError:
+      properties:
+        detail:
+          items:
+            $ref: '#/components/schemas/ValidationError'
+          type: array
+          title: Detail
+      type: object
+      title: HTTPValidationError
+    HealthResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        service:
+          type: string
+          title: Service
+        environment:
+          type: string
+          title: Environment
+      type: object
+      required:
+      - status
+      - service
+      - environment
+      title: HealthResponse
+    InviteMutationResponse:
+      properties:
+        invite:
+          $ref: '#/components/schemas/LabbyTeamInvite'
+        email_sent:
+          type: boolean
+          title: Email Sent
+        email_error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email Error
+      type: object
+      required:
+      - invite
+      - email_sent
+      title: InviteMutationResponse
+    JobMetricsResponse:
+      properties:
+        metrics:
+          items:
+            $ref: '#/components/schemas/JobQueueMetricResponse'
+          type: array
+          title: Metrics
+      type: object
+      required:
+      - metrics
+      title: JobMetricsResponse
+    JobQueueMetricResponse:
+      properties:
+        queue_name:
+          type: string
+          title: Queue Name
+        status:
+          type: string
+          title: Status
+        count:
+          type: integer
+          title: Count
+      type: object
+      required:
+      - queue_name
+      - status
+      - count
+      title: JobQueueMetricResponse
+    LabbyModule:
+      properties:
+        key:
+          type: string
+          title: Key
+        label:
+          type: string
+          title: Label
+        description:
+          type: string
+          title: Description
+        accent:
+          type: string
+          title: Accent
+        accent_bright:
+          type: string
+          title: Accent Bright
+      type: object
+      required:
+      - key
+      - label
+      - description
+      - accent
+      - accent_bright
+      title: LabbyModule
+    LabbyTeamInvite:
+      properties:
+        id:
+          type: string
+          title: Id
+        tenant_id:
+          type: string
+          title: Tenant Id
+        email:
+          type: string
+          title: Email
         nome:
           type: string
-        slug:
+          title: Nome
+        role:
           type: string
-        plano:
+          title: Role
+        default_module:
           type: string
+          title: Default Module
+        status:
+          type: string
+          title: Status
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        last_sent_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Sent At
+        resend_count:
+          type: integer
+          title: Resend Count
+        invited_by_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invited By Id
+        invited_by_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Invited By Nome
+        accepted_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Accepted At
+        revoked_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Revoked At
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
+      type: object
+      required:
+      - id
+      - tenant_id
+      - email
+      - nome
+      - role
+      - default_module
+      - status
+      - expires_at
+      - last_sent_at
+      - resend_count
+      - invited_by_id
+      - accepted_at
+      - revoked_at
+      - created_at
+      - updated_at
+      - modules
+      title: LabbyTeamInvite
+    LabbyUserModule:
+      properties:
+        id:
+          type: string
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        email:
+          type: string
+          title: Email
+        role:
+          type: string
+          title: Role
         ativo:
           type: boolean
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
+          title: Ativo
         default_module:
           type: string
-          enum: [sales, social_media]
-    MembershipResponse:
-      type: object
-      required: [id, tenant_id, tenant_nome, tenant_slug, role, modules, default_module]
-      properties:
-        id:
-          type: string
-          format: uuid
-        tenant_id:
-          type: string
-          format: uuid
-        tenant_nome:
-          type: string
-        tenant_slug:
-          type: string
-        role:
-          type: string
-          enum: [owner, admin, agent, viewer]
+          title: Default Module
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
         modules:
-          type: array
           items:
-            $ref: "#/components/schemas/LabbyModule"
-        default_module:
-          type: string
-          enum: [sales, social_media]
-    MeResponse:
-      type: object
-      required: [user, tenant, memberships]
-      properties:
-        user:
-          $ref: "#/components/schemas/UserResponse"
-        tenant:
-          $ref: "#/components/schemas/TenantResponse"
-        memberships:
+            $ref: '#/components/schemas/LabbyModule'
           type: array
-          items:
-            $ref: "#/components/schemas/MembershipResponse"
-    RefreshRequest:
+          title: Modules
       type: object
-      properties:
-        refresh_token:
-          type:
-            - string
-            - "null"
-    SwitchTenantRequest:
-      type: object
-      required: [membership_id]
-      properties:
-        membership_id:
-          type: string
-          format: uuid
-    ForgotPasswordRequest:
-      type: object
-      required: [email]
+      required:
+      - id
+      - nome
+      - email
+      - role
+      - ativo
+      - default_module
+      - updated_at
+      - modules
+      title: LabbyUserModule
+    LoginRequest:
       properties:
         email:
           type: string
           format: email
-    ResetPasswordRequest:
+          title: Email
+        senha:
+          type: string
+          title: Senha
       type: object
-      required: [token, senha]
+      required:
+      - email
+      - senha
+      title: LoginRequest
+    MeResponse:
+      properties:
+        user:
+          $ref: '#/components/schemas/UserResponse'
+        tenant:
+          $ref: '#/components/schemas/TenantResponse'
+        memberships:
+          items:
+            $ref: '#/components/schemas/MembershipResponse'
+          type: array
+          title: Memberships
+      type: object
+      required:
+      - user
+      - tenant
+      - memberships
+      title: MeResponse
+    MembershipResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        tenant_id:
+          type: string
+          title: Tenant Id
+        tenant_nome:
+          type: string
+          title: Tenant Nome
+        tenant_slug:
+          type: string
+          title: Tenant Slug
+        role:
+          type: string
+          title: Role
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
+        default_module:
+          type: string
+          title: Default Module
+      type: object
+      required:
+      - id
+      - tenant_id
+      - tenant_nome
+      - tenant_slug
+      - role
+      - modules
+      - default_module
+      title: MembershipResponse
+    PublicTeamInvite:
+      properties:
+        id:
+          type: string
+          title: Id
+        tenant:
+          additionalProperties:
+            type: string
+          type: object
+          title: Tenant
+        email:
+          type: string
+          title: Email
+        nome:
+          type: string
+          title: Nome
+        role:
+          type: string
+          title: Role
+        default_module:
+          type: string
+          title: Default Module
+        expires_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expires At
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
+      type: object
+      required:
+      - id
+      - tenant
+      - email
+      - nome
+      - role
+      - default_module
+      - expires_at
+      - modules
+      title: PublicTeamInvite
+    ReadinessResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        service:
+          type: string
+          title: Service
+        environment:
+          type: string
+          title: Environment
+        dependencies:
+          additionalProperties:
+            $ref: '#/components/schemas/DependencyHealth'
+          type: object
+          title: Dependencies
+      type: object
+      required:
+      - status
+      - service
+      - environment
+      - dependencies
+      title: ReadinessResponse
+    RefreshRequest:
+      properties:
+        refresh_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Refresh Token
+      type: object
+      title: RefreshRequest
+    RegisterRequest:
+      properties:
+        nome:
+          type: string
+          maxLength: 160
+          minLength: 1
+          title: Nome
+        email:
+          type: string
+          format: email
+          title: Email
+        senha:
+          type: string
+          maxLength: 128
+          minLength: 8
+          title: Senha
+        empresa:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Empresa
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+      type: object
+      required:
+      - nome
+      - email
+      - senha
+      - empresa
+      title: RegisterRequest
+    ResetPasswordRequest:
       properties:
         token:
           type: string
+          title: Token
         senha:
           type: string
+          maxLength: 128
           minLength: 8
-    CurrentModulesResponse:
-      type: object
-      required: [modules, default_module]
-      properties:
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
-        default_module:
-          type: string
-          enum: [sales, social_media]
-    LabbyUserModule:
-      type: object
-      required: [id, nome, email, role, ativo, default_module, updated_at, modules]
-      properties:
-        id:
-          type: string
-          format: uuid
-        nome:
-          type: string
-        email:
-          type: string
-          format: email
-        role:
-          type: string
-          enum: [owner, admin, agent, viewer]
-        ativo:
-          type: boolean
-        default_module:
-          type: string
-          enum: [sales, social_media]
-        updated_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
-    UserModulesStats:
-      type: object
-      required: [total, sales, social_media]
-      properties:
-        total:
-          type: integer
-        sales:
-          type: integer
-        social_media:
-          type: integer
-    UserModulesResponse:
-      type: object
-      required: [users, total, limit, offset, stats]
-      properties:
-        users:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyUserModule"
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        stats:
-          $ref: "#/components/schemas/UserModulesStats"
-    UpdateUserModulesRequest:
-      type: object
-      required: [module_keys]
-      properties:
-        module_keys:
-          type: array
-          items:
-            type: string
-            enum: [sales, social_media]
-        default_module:
-          type: string
-          enum: [sales, social_media]
-        expected_updated_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-    UpdateUserModulesResponse:
-      type: object
-      required: [user_id, modules, default_module, updated_at]
-      properties:
-        user_id:
-          type: string
-          format: uuid
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
-        default_module:
-          type: string
-          enum: [sales, social_media]
-        updated_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-    CreateTeamInviteRequest:
-      type: object
-      required: [nome, email, role, module_keys]
-      properties:
-        nome:
-          type: string
-        email:
-          type: string
-          format: email
-        role:
-          type: string
-          enum: [admin, agent, viewer]
-        module_keys:
-          type: array
-          items:
-            type: string
-            enum: [sales, social_media]
-        default_module:
-          type: string
-          enum: [sales, social_media]
-    LabbyTeamInvite:
+          title: Senha
       type: object
       required:
-        - id
-        - tenant_id
-        - email
-        - nome
-        - role
-        - default_module
-        - status
-        - expires_at
-        - last_sent_at
-        - resend_count
-        - invited_by_id
-        - accepted_at
-        - revoked_at
-        - created_at
-        - updated_at
-        - modules
+      - token
+      - senha
+      title: ResetPasswordRequest
+    SocialNewsItemResponse:
       properties:
         id:
           type: string
           format: uuid
+          title: Id
         tenant_id:
           type: string
           format: uuid
-        email:
+          title: Tenant Id
+        run_id:
           type: string
-          format: email
-        nome:
+          format: uuid
+          title: Run Id
+        segment_id:
           type: string
-        role:
+          format: uuid
+          title: Segment Id
+        source_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Source Id
+        provider:
           type: string
-          enum: [admin, agent, viewer]
-        default_module:
+          title: Provider
+        external_id:
           type: string
-          enum: [sales, social_media]
+          title: External Id
+        external_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: External Url
+        published_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Published At
+        author_handle:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author Handle
+        author_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Author Name
+        original_content:
+          type: string
+          title: Original Content
+        rewritten_content:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rewritten Content
+        media_urls:
+          items: {}
+          type: array
+          title: Media Urls
+        metrics:
+          additionalProperties: true
+          type: object
+          title: Metrics
+        ranking_score:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Ranking Score
+        ranking_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ranking Reason
+        ranking_source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ranking Source
+        type_match:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Type Match
         status:
           type: string
-          enum: [pending, accepted, revoked, expired]
-        expires_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        last_sent_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        resend_count:
-          type: integer
-        invited_by_id:
-          type:
-            - string
-            - "null"
-          format: uuid
-        invited_by_nome:
-          type:
-            - string
-            - "null"
-        accepted_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        revoked_at:
-          type:
-            - string
-            - "null"
-          format: date-time
+          title: Status
         created_at:
-          type:
-            - string
-            - "null"
+          type: string
           format: date-time
+          title: Created At
         updated_at:
-          type:
-            - string
-            - "null"
+          type: string
           format: date-time
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
-    TeamInvitesResponse:
+          title: Updated At
       type: object
-      required: [invites, total, limit, offset]
+      required:
+      - id
+      - tenant_id
+      - run_id
+      - segment_id
+      - provider
+      - external_id
+      - original_content
+      - media_urls
+      - metrics
+      - status
+      - created_at
+      - updated_at
+      title: SocialNewsItemResponse
+    SocialNewsItemsResponse:
       properties:
-        invites:
-          type: array
+        items:
           items:
-            $ref: "#/components/schemas/LabbyTeamInvite"
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-    InviteMutationResponse:
+            $ref: '#/components/schemas/SocialNewsItemResponse'
+          type: array
+          title: Items
       type: object
-      required: [invite, email_sent]
+      required:
+      - items
+      title: SocialNewsItemsResponse
+    SocialNewsJobRequest:
       properties:
-        invite:
-          $ref: "#/components/schemas/LabbyTeamInvite"
-        email_sent:
-          type: boolean
-        email_error:
-          type:
-            - string
-            - "null"
-    PublicTeamInvite:
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Idempotency Key
       type: object
-      required: [id, tenant, email, nome, role, default_module, expires_at, modules]
+      title: SocialNewsJobRequest
+    SocialNewsJobResponse:
+      properties:
+        job:
+          $ref: '#/components/schemas/EnqueuedJobResponse'
+      type: object
+      required:
+      - job
+      title: SocialNewsJobResponse
+    SocialNewsRunCreate:
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Idempotency Key
+        run_type:
+          type: string
+          enum:
+          - manual
+          - scheduled
+          - calibration
+          title: Run Type
+          default: manual
+      type: object
+      required:
+      - segment_id
+      title: SocialNewsRunCreate
+    SocialNewsRunCreatedResponse:
+      properties:
+        run:
+          $ref: '#/components/schemas/SocialNewsRunResponse'
+        job:
+          $ref: '#/components/schemas/EnqueuedJobResponse'
+      type: object
+      required:
+      - run
+      - job
+      title: SocialNewsRunCreatedResponse
+    SocialNewsRunResponse:
       properties:
         id:
           type: string
           format: uuid
-        tenant:
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        membership_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Membership Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        job_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Job Id
+        run_type:
+          type: string
+          title: Run Type
+        status:
+          type: string
+          title: Status
+        idempotency_key:
+          type: string
+          title: Idempotency Key
+        window_start_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Window Start At
+        candidates_count:
+          type: integer
+          title: Candidates Count
+        ranked_count:
+          type: integer
+          title: Ranked Count
+        approved_stage1_count:
+          type: integer
+          title: Approved Stage1 Count
+        approved_stage2_count:
+          type: integer
+          title: Approved Stage2 Count
+        sent_count:
+          type: integer
+          title: Sent Count
+        failed_count:
+          type: integer
+          title: Failed Count
+        error_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Code
+        error_message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error Message
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - run_type
+      - status
+      - idempotency_key
+      - candidates_count
+      - ranked_count
+      - approved_stage1_count
+      - approved_stage2_count
+      - sent_count
+      - failed_count
+      - created_at
+      - updated_at
+      title: SocialNewsRunResponse
+    SocialNewsRunsResponse:
+      properties:
+        runs:
+          items:
+            $ref: '#/components/schemas/SocialNewsRunResponse'
+          type: array
+          title: Runs
+      type: object
+      required:
+      - runs
+      title: SocialNewsRunsResponse
+    SocialNewsSegmentCreate:
+      properties:
+        slug:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Slug
+        name:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        base_knowledge:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Knowledge
+        disclaimer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disclaimer
+        min_engagement_score:
+          type: integer
+          minimum: 0.0
+          title: Min Engagement Score
+          default: 0
+        config:
+          additionalProperties: true
           type: object
-          required: [id, nome]
-          properties:
-            id:
-              type: string
-              format: uuid
-            nome:
-              type: string
+          title: Config
+      type: object
+      required:
+      - slug
+      - name
+      title: SocialNewsSegmentCreate
+    SocialNewsSegmentResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        slug:
+          type: string
+          title: Slug
+        name:
+          type: string
+          title: Name
+        description:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Description
+        base_knowledge:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Knowledge
+        disclaimer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disclaimer
+        min_engagement_score:
+          type: integer
+          title: Min Engagement Score
+        status:
+          type: string
+          title: Status
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - slug
+      - name
+      - min_engagement_score
+      - status
+      - config
+      - created_at
+      - updated_at
+      title: SocialNewsSegmentResponse
+    SocialNewsSegmentsResponse:
+      properties:
+        segments:
+          items:
+            $ref: '#/components/schemas/SocialNewsSegmentResponse'
+          type: array
+          title: Segments
+      type: object
+      required:
+      - segments
+      title: SocialNewsSegmentsResponse
+    SocialNewsSourceCreate:
+      properties:
+        source_type:
+          type: string
+          enum:
+          - x_handle
+          - x_keyword
+          - x_query
+          title: Source Type
+        value:
+          type: string
+          maxLength: 500
+          minLength: 1
+          title: Value
+        provider:
+          type: string
+          const: x
+          title: Provider
+          default: x
+        min_likes:
+          type: integer
+          minimum: 0.0
+          title: Min Likes
+          default: 0
+        min_reposts:
+          type: integer
+          minimum: 0.0
+          title: Min Reposts
+          default: 0
+        min_replies:
+          type: integer
+          minimum: 0.0
+          title: Min Replies
+          default: 0
+        min_impressions:
+          type: integer
+          minimum: 0.0
+          title: Min Impressions
+          default: 0
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+      type: object
+      required:
+      - source_type
+      - value
+      title: SocialNewsSourceCreate
+    SocialNewsSourceResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        provider:
+          type: string
+          title: Provider
+        source_type:
+          type: string
+          title: Source Type
+        value:
+          type: string
+          title: Value
+        min_likes:
+          type: integer
+          title: Min Likes
+        min_reposts:
+          type: integer
+          title: Min Reposts
+        min_replies:
+          type: integer
+          title: Min Replies
+        min_impressions:
+          type: integer
+          title: Min Impressions
+        status:
+          type: string
+          title: Status
+        metadata_json:
+          additionalProperties: true
+          type: object
+          title: Metadata Json
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - provider
+      - source_type
+      - value
+      - min_likes
+      - min_reposts
+      - min_replies
+      - min_impressions
+      - status
+      - metadata_json
+      - created_at
+      - updated_at
+      title: SocialNewsSourceResponse
+    SocialNewsSourcesResponse:
+      properties:
+        sources:
+          items:
+            $ref: '#/components/schemas/SocialNewsSourceResponse'
+          type: array
+          title: Sources
+      type: object
+      required:
+      - sources
+      title: SocialNewsSourcesResponse
+    SocialNewsSubscriberCreate:
+      properties:
         email:
           type: string
           format: email
+          title: Email
+        name:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Name
+        origin:
+          type: string
+          maxLength: 80
+          title: Origin
+          default: manual
+        consent_source:
+          type: string
+          maxLength: 80
+          title: Consent Source
+          default: admin
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+      type: object
+      required:
+      - email
+      title: SocialNewsSubscriberCreate
+    SocialNewsSubscriberCreatedResponse:
+      properties:
+        subscriber:
+          $ref: '#/components/schemas/SocialNewsSubscriberResponse'
+        unsubscribe_token:
+          type: string
+          title: Unsubscribe Token
+      type: object
+      required:
+      - subscriber
+      - unsubscribe_token
+      title: SocialNewsSubscriberCreatedResponse
+    SocialNewsSubscriberResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        email_normalized:
+          type: string
+          title: Email Normalized
+        name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Name
+        status:
+          type: string
+          title: Status
+        origin:
+          type: string
+          title: Origin
+        consent_status:
+          type: string
+          title: Consent Status
+        consent_source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Consent Source
+        consent_given_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Consent Given At
+        unsubscribed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Unsubscribed At
+        metadata_json:
+          additionalProperties: true
+          type: object
+          title: Metadata Json
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - email_normalized
+      - status
+      - origin
+      - consent_status
+      - metadata_json
+      - created_at
+      - updated_at
+      title: SocialNewsSubscriberResponse
+    SocialNewsSubscribersResponse:
+      properties:
+        subscribers:
+          items:
+            $ref: '#/components/schemas/SocialNewsSubscriberResponse'
+          type: array
+          title: Subscribers
+      type: object
+      required:
+      - subscribers
+      title: SocialNewsSubscribersResponse
+    SocialNewsUnsubscribeResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        subscriber_id:
+          type: string
+          format: uuid
+          title: Subscriber Id
+      type: object
+      required:
+      - status
+      - subscriber_id
+      title: SocialNewsUnsubscribeResponse
+    SwitchTenantRequest:
+      properties:
+        membership_id:
+          type: string
+          title: Membership Id
+      type: object
+      required:
+      - membership_id
+      title: SwitchTenantRequest
+    TeamInvitesResponse:
+      properties:
+        invites:
+          items:
+            $ref: '#/components/schemas/LabbyTeamInvite'
+          type: array
+          title: Invites
+        total:
+          type: integer
+          title: Total
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+      type: object
+      required:
+      - invites
+      - total
+      - limit
+      - offset
+      title: TeamInvitesResponse
+    TenantResponse:
+      properties:
+        id:
+          type: string
+          title: Id
         nome:
           type: string
-        role:
+          title: Nome
+        slug:
           type: string
-          enum: [admin, agent, viewer]
+          title: Slug
+        plano:
+          type: string
+          title: Plano
+        whatsapp_conectado:
+          type: boolean
+          title: Whatsapp Conectado
+          default: false
+        whatsapp_numero:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Whatsapp Numero
+        whatsapp_status:
+          type: string
+          title: Whatsapp Status
+          default: disconnected
+        limite_mensagens_mes:
+          type: integer
+          title: Limite Mensagens Mes
+          default: 1000
+        mensagens_mes_atual:
+          type: integer
+          title: Mensagens Mes Atual
+          default: 0
+        limite_contatos:
+          type: integer
+          title: Limite Contatos
+          default: 500
+        limite_bots:
+          type: integer
+          title: Limite Bots
+          default: 1
+        limite_atendentes:
+          type: integer
+          title: Limite Atendentes
+          default: 3
+        ativo:
+          type: boolean
+          title: Ativo
+        canais_conectados:
+          type: integer
+          title: Canais Conectados
+          default: 0
+        canais:
+          items:
+            additionalProperties: true
+            type: object
+          type: array
+          title: Canais
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
         default_module:
           type: string
-          enum: [sales, social_media]
-        expires_at:
-          type:
-            - string
-            - "null"
-          format: date-time
-        modules:
-          type: array
-          items:
-            $ref: "#/components/schemas/LabbyModule"
-    AcceptTeamInviteRequest:
+          title: Default Module
       type: object
-      required: [senha]
+      required:
+      - id
+      - nome
+      - slug
+      - plano
+      - ativo
+      - default_module
+      title: TenantResponse
+    UpdateUserModulesRequest:
       properties:
-        senha:
+        module_keys:
+          items:
+            type: string
+          type: array
+          minItems: 1
+          title: Module Keys
+        default_module:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Default Module
+        expected_updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Expected Updated At
+      type: object
+      required:
+      - module_keys
+      title: UpdateUserModulesRequest
+    UpdateUserModulesResponse:
+      properties:
+        user_id:
           type: string
-          minLength: 8
+          title: User Id
+        modules:
+          items:
+            $ref: '#/components/schemas/LabbyModule'
+          type: array
+          title: Modules
+        default_module:
+          type: string
+          title: Default Module
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+      type: object
+      required:
+      - user_id
+      - modules
+      - default_module
+      - updated_at
+      title: UpdateUserModulesResponse
+    UserModulesResponse:
+      properties:
+        users:
+          items:
+            $ref: '#/components/schemas/LabbyUserModule'
+          type: array
+          title: Users
+        total:
+          type: integer
+          title: Total
+        limit:
+          type: integer
+          title: Limit
+        offset:
+          type: integer
+          title: Offset
+        stats:
+          $ref: '#/components/schemas/UserModulesStats'
+      type: object
+      required:
+      - users
+      - total
+      - limit
+      - offset
+      - stats
+      title: UserModulesResponse
+    UserModulesStats:
+      properties:
+        total:
+          type: integer
+          title: Total
+        sales:
+          type: integer
+          title: Sales
+        social_media:
+          type: integer
+          title: Social Media
+      type: object
+      required:
+      - total
+      - sales
+      - social_media
+      title: UserModulesStats
+    UserResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        tenant_id:
+          type: string
+          title: Tenant Id
         nome:
           type: string
+          title: Nome
+        email:
+          type: string
+          format: email
+          title: Email
+        avatar_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Avatar Url
+        role:
+          type: string
+          title: Role
+      type: object
+      required:
+      - id
+      - tenant_id
+      - nome
+      - email
+      - role
+      title: UserResponse
+    ValidationError:
+      properties:
+        loc:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+          type: array
+          title: Location
+        msg:
+          type: string
+          title: Message
+        type:
+          type: string
+          title: Error Type
+      type: object
+      required:
+      - loc
+      - msg
+      - type
+      title: ValidationError
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer

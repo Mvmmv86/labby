@@ -18,9 +18,15 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
     op.create_table(
         "jobs",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("membership_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("job_type", sa.String(length=120), nullable=False),
@@ -90,7 +96,12 @@ def upgrade() -> None:
 
     op.create_table(
         "job_attempts",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("job_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("attempt_number", sa.Integer(), nullable=False),
@@ -128,7 +139,12 @@ def upgrade() -> None:
 
     op.create_table(
         "outbox_events",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("membership_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("aggregate_type", sa.String(length=120), nullable=False),
@@ -195,7 +211,12 @@ def upgrade() -> None:
 
     op.create_table(
         "webhook_events",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("job_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("provider", sa.String(length=80), nullable=False),
@@ -264,7 +285,12 @@ def upgrade() -> None:
 
     op.create_table(
         "rate_limit_events",
-        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            server_default=sa.text("gen_random_uuid()"),
+            nullable=False,
+        ),
         sa.Column("tenant_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("provider", sa.String(length=80), nullable=False),
         sa.Column("rate_limit_key", sa.String(length=180), nullable=False),

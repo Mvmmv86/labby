@@ -207,12 +207,16 @@ Feito:
 - Configurar `origin` via SSH.
 - Fazer push da branch atual.
 - Criar/publicar branch principal `main`.
+- Ativar CI no GitHub.
+- CI verde em `main` e `feature/f3-team-invites-modules`.
 
 Falta:
 
-- Ativar CI no GitHub.
 - Proteger branch principal.
-- Documentar secrets de producao.
+
+Entregue localmente em 2026-06-01:
+
+- Documento `docs/production-secrets.md`.
 
 Gate:
 
@@ -313,8 +317,12 @@ Entregue localmente em 2026-06-01:
   retry/backoff, dead-letter e metricas por tenant.
 - Runner Celery `labby.jobs.dispatch_due_jobs`.
 - Endpoint admin `GET /api/v2/labby/jobs/metrics`.
+- Ajuste das migrations iniciais para gerar UUID no Postgres via
+  `gen_random_uuid()`, necessario para inserts por SQL bruto.
 
 ### A2 - Social atual transplantado
+
+Status: primeira fatia tecnica iniciada localmente.
 
 Objetivo: portar o fluxo que ja existe hoje antes de criar a plataforma social
 multi-rede.
@@ -344,6 +352,18 @@ Gate:
 - Unsubscribe funcionando.
 - Nenhuma chamada do frontend social para OmniiaPro.
 - Teste E2E do fluxo X -> IA -> digest.
+
+Entregue localmente em 2026-06-01:
+
+- Migration `004_social_news_foundation`.
+- Tabelas `social_news_segments`, `social_news_sources`,
+  `social_news_curators`, `social_news_runs`, `social_news_items`,
+  `social_news_subscribers`, `social_news_subscriber_consent_events` e
+  `social_news_dispatches`.
+- Endpoints `/api/v2/labby/social/news/*`.
+- Runs, rewrite e dispatch criam jobs idempotentes no A1.
+- Subscribers com unsubscribe assinado e hash persistido.
+- Documento `docs/a2-social-current-handoff.md`.
 
 ### A3 - Sales transplantado
 
