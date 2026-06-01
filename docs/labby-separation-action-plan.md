@@ -27,7 +27,7 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 
 Commits locais relevantes:
 
-- `0003397 feat: add social news curation flow`
+- `62650a1 feat: add social news curation flow`
 - `afaa63c feat: add social news foundation`
 - `a9897d0 fix: configure package discovery for CI`
 - `a550fbf docs: update GitHub repository status`
