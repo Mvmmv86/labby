@@ -19,6 +19,12 @@ Data: 2026-06-01
 - Criacao de runs por job idempotente `social.news.capture`.
 - Enqueue de rewrite por job `social.news.rewrite`.
 - Enqueue de dispatch por job `social.news.dispatch`.
+- Handlers registrados para `social.news.capture`, `social.news.rewrite` e
+  `social.news.dispatch`.
+- Adapter X standalone para TwitterAPI.io com `LABBY_*`.
+- Captura X por worker com dedupe, filtro anti-spam simples, ranking por
+  engagement e persistencia em `social_news_items`.
+- Dispatch por worker usando Resend via `EmailService.send_email`.
 - Subscribers com token de unsubscribe assinado e hash persistido.
 - Testes de modelos, service e rotas.
 
@@ -31,7 +37,7 @@ Fluxo atual:
 1. API valida membership e modulo `social_media`.
 2. API cria ou reutiliza run idempotente.
 3. API cria job no A1 (`jobs`) com payload tenant-scoped.
-4. Worker especifico processa a fila em fatia posterior.
+4. Worker especifico processa captura, rewrite ou dispatch.
 
 ## Jobs criados
 
@@ -41,10 +47,9 @@ Fluxo atual:
 
 ## Proxima fatia
 
-Portar os adapters reais do fluxo antigo:
+Proximas fatias:
 
-1. X/news radar para preencher `social_news_items`.
-2. Ranking/classificacao sem acoplamento OmniiaFlow.
-3. Rewrite IA por job.
-4. Dispatch Resend por job com `social_news_dispatches`.
-5. E2E X -> IA -> digest.
+1. Trocar rewrite fallback por chamada real de IA standalone.
+2. Adicionar endpoints de aprovacao/rejeicao stage 1 e stage 2.
+3. Classificacao por tipo de evento via IA.
+4. E2E X -> IA -> digest.

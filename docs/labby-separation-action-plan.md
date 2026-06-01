@@ -27,6 +27,9 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 
 Commits locais relevantes:
 
+- `afaa63c feat: add social news foundation`
+- `a9897d0 fix: configure package discovery for CI`
+- `a550fbf docs: update GitHub repository status`
 - `6fd4760 docs: add revised Labby separation action plan`
 - `79c9422 feat: add jobs outbox foundation`
 - `1065034 chore: add scalability database foundation`
@@ -362,6 +365,12 @@ Entregue localmente em 2026-06-01:
   `social_news_dispatches`.
 - Endpoints `/api/v2/labby/social/news/*`.
 - Runs, rewrite e dispatch criam jobs idempotentes no A1.
+- Handlers dos jobs `social.news.capture`, `social.news.rewrite` e
+  `social.news.dispatch` registrados no worker.
+- Adapter X standalone para TwitterAPI.io com secrets `LABBY_*`.
+- Captura X por worker com dedupe, ranking por engagement e persistencia em
+  `social_news_items`.
+- Dispatch Resend por worker com `social_news_dispatches`.
 - Subscribers com unsubscribe assinado e hash persistido.
 - Documento `docs/a2-social-current-handoff.md`.
 

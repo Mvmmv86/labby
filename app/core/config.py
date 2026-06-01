@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     app_base_url: str = "https://app.labby.com.br"
     email_from: str = "Labby <convites@labby.com.br>"
     resend_api_key: str | None = None
+    resend_timeout_seconds: float = 10.0
+    x_api_provider: str = "twitterapi_io"
+    x_api_key: str | None = None
+    x_api_base_url: str | None = None
+    x_api_timeout_seconds: float = 30.0
+    twitterapi_io_key: str | None = None
+    social_news_capture_lookback_hours: int = 24
+    social_news_max_source_requests_per_run: int = 10
+    social_news_posts_per_source: int = 20
+    social_news_capture_limit: int = 30
+    social_news_rank_limit: int = 5
     allowed_origins: str = (
         "http://localhost:3000,http://localhost:3001,https://app.labby.com.br"
     )

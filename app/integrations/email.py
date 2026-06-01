@@ -9,6 +9,7 @@ from app.core.config import get_settings
 @dataclass(frozen=True)
 class EmailDeliveryResult:
     sent: bool
+    provider_message_id: str | None = None
     error: str | None = None
 
 
@@ -48,6 +49,50 @@ class EmailService:
             return EmailDeliveryResult(sent=False, error=str(exc))
 
         return EmailDeliveryResult(sent=True)
+
+    def send_email(
+        self,
+        *,
+        to_email: str,
+        subject: str,
+        html: str,
+        text: str | None = None,
+        from_email: str | None = None,
+        tags: list[dict[str, str]] | None = None,
+        idempotency_key: str | None = None,
+    ) -> EmailDeliveryResult:
+        settings = get_settings()
+        if not settings.resend_api_key:
+            return EmailDeliveryResult(sent=False, error="RESEND_API_KEY nao configurada")
+
+        payload = {
+            "from": from_email or settings.email_from,
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+        }
+        if text:
+            payload["text"] = text
+        if tags:
+            payload["tags"] = tags
+
+        headers = {"Authorization": f"Bearer {settings.resend_api_key}"}
+        if idempotency_key:
+            headers["Idempotency-Key"] = idempotency_key
+
+        try:
+            response = httpx.post(
+                "https://api.resend.com/emails",
+                headers=headers,
+                json=payload,
+                timeout=settings.resend_timeout_seconds,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            return EmailDeliveryResult(sent=False, error=str(exc))
+
+        data = response.json()
+        return EmailDeliveryResult(sent=True, provider_message_id=data.get("id"))
 
     @staticmethod
     def _team_invite_html(*, to_name: str, tenant_name: str, invite_url: str) -> str:

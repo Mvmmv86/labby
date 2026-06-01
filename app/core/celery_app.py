@@ -13,7 +13,11 @@ celery_app = Celery(
 celery_app.conf.update(
     timezone=settings.timezone,
     enable_utc=True,
-    imports=("app.jobs.smoke", "app.jobs.runner"),
+    imports=(
+        "app.jobs.smoke",
+        "app.jobs.runner",
+        "app.domains.social_media.news_jobs",
+    ),
     task_track_started=True,
     task_time_limit=60 * 15,
     task_soft_time_limit=60 * 10,
