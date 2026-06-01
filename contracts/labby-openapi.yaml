@@ -399,6 +399,14 @@ paths:
           - type: string
           - type: 'null'
           title: Status
+      - name: ativo
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ativo
       - name: limit
         in: query
         required: false
@@ -422,7 +430,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsSegmentsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendSegmentsResponse'
         '422':
           description: Validation Error
           content:
@@ -448,7 +456,118 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsSegmentResponse'
+                $ref: '#/components/schemas/SocialNewsSegmentMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/from-seed:
+    post:
+      tags:
+      - social-news
+      summary: Create Segment From Seed
+      operationId: create_segment_from_seed_api_v2_labby_social_news_segments_from_seed_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSegmentFromSeedCreate'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSegmentMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/social/news/segments/{segment_id}:
+    get:
+      tags:
+      - social-news
+      summary: Get Segment
+      operationId: get_segment_api_v2_labby_social_news_segments__segment_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendSegmentResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - social-news
+      summary: Update Segment
+      operationId: update_segment_api_v2_labby_social_news_segments__segment_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSegmentPatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSegmentMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - social-news
+      summary: Delete Segment
+      operationId: delete_segment_api_v2_labby_social_news_segments__segment_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '204':
+          description: Successful Response
         '422':
           description: Validation Error
           content:
@@ -476,7 +595,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsSourcesResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendSourcesResponse'
         '422':
           description: Validation Error
           content:
@@ -509,7 +628,92 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsSourceResponse'
+                $ref: '#/components/schemas/SocialNewsSourceMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/sources/{source_id}:
+    delete:
+      tags:
+      - social-news
+      summary: Delete Source
+      operationId: delete_source_api_v2_labby_social_news_sources__source_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: source_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Source Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/{segment_id}/curator:
+    get:
+      tags:
+      - social-news
+      summary: Get Curator
+      operationId: get_curator_api_v2_labby_social_news_segments__segment_id__curator_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendCuratorResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - social-news
+      summary: Upsert Curator
+      operationId: upsert_curator_api_v2_labby_social_news_segments__segment_id__curator_put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsCuratorUpsertRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsCuratorMutationResponse'
         '422':
           description: Validation Error
           content:
@@ -559,6 +763,14 @@ paths:
           - type: string
           - type: 'null'
           title: Segment Id
+      - name: run_type
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Type
       - name: status
         in: query
         required: false
@@ -590,7 +802,62 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsRunsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendRunsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/runs/manual:
+    post:
+      tags:
+      - social-news
+      summary: Start Manual Run
+      operationId: start_manual_run_api_v2_labby_social_news_runs_manual_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsManualRunCreate'
+        required: true
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsManualRunResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/social/news/runs/{run_id}:
+    get:
+      tags:
+      - social-news
+      summary: Get Run
+      operationId: get_run_api_v2_labby_social_news_runs__run_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Run Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendRunResponse'
         '422':
           description: Validation Error
           content:
@@ -635,7 +902,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SocialNewsItemsResponse'
+                $ref: '#/components/schemas/SocialNewsFrontendItemsResponse'
         '422':
           description: Validation Error
           content:
@@ -699,6 +966,119 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/{segment_id}/schedules:
+    get:
+      tags:
+      - social-news
+      summary: List Segment Schedules
+      operationId: list_segment_schedules_api_v2_labby_social_news_segments__segment_id__schedules_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendSchedulesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/segments/{segment_id}/schedules/recalibrate:
+    post:
+      tags:
+      - social-news
+      summary: Recalibrate Segment Schedules
+      operationId: recalibrate_segment_schedules_api_v2_labby_social_news_segments__segment_id__schedules_recalibrate_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Segment Id
+      responses:
+        '202':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsScheduleRecalibrationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/schedules/{schedule_id}:
+    patch:
+      tags:
+      - social-news
+      summary: Update Schedule
+      operationId: update_schedule_api_v2_labby_social_news_schedules__schedule_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSchedulePatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendScheduleResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - social-news
+      summary: Delete Schedule
+      operationId: delete_schedule_api_v2_labby_social_news_schedules__schedule_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: schedule_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Schedule Id
+      responses:
+        '204':
+          description: Successful Response
         '422':
           description: Validation Error
           content:
@@ -1268,6 +1648,171 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/subscribers:
+    get:
+      tags:
+      - social-news
+      summary: List Flat Subscribers
+      operationId: list_flat_subscribers_api_v2_labby_social_news_subscribers_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 500
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendSubscribersResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - social-news
+      summary: Create Flat Subscriber
+      operationId: create_flat_subscriber_api_v2_labby_social_news_subscribers_post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsFrontendSubscriberCreate'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendSubscriberResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/subscribers/import-csv:
+    post:
+      tags:
+      - social-news
+      summary: Import Subscribers Csv
+      operationId: import_subscribers_csv_api_v2_labby_social_news_subscribers_import_csv_post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsSubscriberCsvImportRequest'
+        required: true
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsSubscriberCsvImportResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/social/news/subscribers/{subscriber_id}:
+    patch:
+      tags:
+      - social-news
+      summary: Update Flat Subscriber
+      operationId: update_flat_subscriber_api_v2_labby_social_news_subscribers__subscriber_id__patch
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: subscriber_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Subscriber Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SocialNewsFrontendSubscriberPatch'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsFrontendSubscriberResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - social-news
+      summary: Delete Flat Subscriber
+      operationId: delete_flat_subscriber_api_v2_labby_social_news_subscribers__subscriber_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: subscriber_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Subscriber Id
+      responses:
+        '204':
+          description: Successful Response
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/social/news/segments/{segment_id}/subscribers:
     get:
       tags:
@@ -1360,6 +1905,31 @@ paths:
       - social-news
       summary: Unsubscribe
       operationId: unsubscribe_api_v2_labby_social_news_unsubscribe__token__post
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Token
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsUnsubscribeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags:
+      - social-news
+      summary: Get Unsubscribe Status
+      operationId: get_unsubscribe_status_api_v2_labby_social_news_unsubscribe__token__get
       parameters:
       - name: token
         in: path
@@ -2164,6 +2734,63 @@ components:
       required:
       - item
       title: SocialNewsCurationResponse
+    SocialNewsCuratorMutationResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+      type: object
+      required:
+      - id
+      - segment_id
+      title: SocialNewsCuratorMutationResponse
+    SocialNewsCuratorUpsertRequest:
+      properties:
+        nome:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Nome
+        modelo:
+          type: string
+          maxLength: 80
+          title: Modelo
+          default: gpt-4o-mini
+        temperatura:
+          type: number
+          maximum: 2.0
+          minimum: 0.0
+          title: Temperatura
+          default: 0.4
+        max_tokens:
+          type: integer
+          exclusiveMinimum: 0.0
+          title: Max Tokens
+          default: 600
+        system_prompt_complementar:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: System Prompt Complementar
+        base_conhecimento:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Conhecimento
+        ativo:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ativo
+      type: object
+      required:
+      - nome
+      title: SocialNewsCuratorUpsertRequest
     SocialNewsDispatchConfigResponse:
       properties:
         email_enabled:
@@ -2182,6 +2809,51 @@ components:
       - email_enabled
       - resend_api_key_configured
       title: SocialNewsDispatchConfigResponse
+    SocialNewsFrontendCuratorResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        nome:
+          type: string
+          title: Nome
+        modelo:
+          type: string
+          title: Modelo
+        temperatura:
+          type: number
+          title: Temperatura
+        max_tokens:
+          type: integer
+          title: Max Tokens
+        system_prompt_complementar:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: System Prompt Complementar
+        base_conhecimento:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Conhecimento
+        ativo:
+          type: boolean
+          title: Ativo
+      type: object
+      required:
+      - id
+      - segment_id
+      - nome
+      - modelo
+      - temperatura
+      - max_tokens
+      - ativo
+      title: SocialNewsFrontendCuratorResponse
     SocialNewsFrontendDispatchResponse:
       properties:
         id:
@@ -2465,6 +3137,499 @@ components:
       required:
       - items
       title: SocialNewsFrontendItemsResponse
+    SocialNewsFrontendRunResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        run_type:
+          type: string
+          title: Run Type
+        schedule_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Schedule Id
+        window_start_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Window Start At
+        status:
+          type: string
+          title: Status
+        candidatos_count:
+          type: integer
+          title: Candidatos Count
+        ranqueados_count:
+          type: integer
+          title: Ranqueados Count
+        aprovados_stage1:
+          type: integer
+          title: Aprovados Stage1
+        aprovados_stage2:
+          type: integer
+          title: Aprovados Stage2
+        enviados_count:
+          type: integer
+          title: Enviados Count
+        falhas_count:
+          type: integer
+          title: Falhas Count
+        erro_mensagem:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Erro Mensagem
+        iniciado_at:
+          type: string
+          format: date-time
+          title: Iniciado At
+        concluido_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Concluido At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        iniciado_por:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Iniciado Por
+        custo_estimado_usd:
+          type: number
+          title: Custo Estimado Usd
+        custo_x_api_usd:
+          type: number
+          title: Custo X Api Usd
+        custo_llm_usd:
+          type: number
+          title: Custo Llm Usd
+        custo_resend_usd:
+          type: number
+          title: Custo Resend Usd
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - run_type
+      - status
+      - candidatos_count
+      - ranqueados_count
+      - aprovados_stage1
+      - aprovados_stage2
+      - enviados_count
+      - falhas_count
+      - iniciado_at
+      - updated_at
+      - custo_estimado_usd
+      - custo_x_api_usd
+      - custo_llm_usd
+      - custo_resend_usd
+      title: SocialNewsFrontendRunResponse
+    SocialNewsFrontendRunsResponse:
+      properties:
+        runs:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendRunResponse'
+          type: array
+          title: Runs
+      type: object
+      required:
+      - runs
+      title: SocialNewsFrontendRunsResponse
+    SocialNewsFrontendScheduleResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Nome
+        timezone:
+          type: string
+          title: Timezone
+        day_of_week:
+          anyOf:
+          - type: integer
+          - type: 'null'
+          title: Day Of Week
+        window_start_hour:
+          type: integer
+          title: Window Start Hour
+        window_end_hour:
+          type: integer
+          title: Window End Hour
+        scheduled_hour:
+          type: integer
+          title: Scheduled Hour
+        scheduled_minute:
+          type: integer
+          title: Scheduled Minute
+        confidence_score:
+          type: number
+          title: Confidence Score
+        amostras_count:
+          type: integer
+          title: Amostras Count
+        score_medio:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Score Medio
+        descoberto_por:
+          type: string
+          title: Descoberto Por
+        origem_run_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Origem Run Id
+        ativo:
+          type: boolean
+          title: Ativo
+        last_run_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Last Run At
+        next_run_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Next Run At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - timezone
+      - window_start_hour
+      - window_end_hour
+      - scheduled_hour
+      - scheduled_minute
+      - confidence_score
+      - amostras_count
+      - descoberto_por
+      - ativo
+      - created_at
+      - updated_at
+      title: SocialNewsFrontendScheduleResponse
+    SocialNewsFrontendSchedulesResponse:
+      properties:
+        schedules:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendScheduleResponse'
+          type: array
+          title: Schedules
+      type: object
+      required:
+      - schedules
+      title: SocialNewsFrontendSchedulesResponse
+    SocialNewsFrontendSegmentResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        slug:
+          type: string
+          title: Slug
+        nome:
+          type: string
+          title: Nome
+        idioma:
+          type: string
+          title: Idioma
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
+        disclaimer:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Disclaimer
+        base_conhecimento:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Conhecimento
+        min_engagement_score:
+          type: integer
+          title: Min Engagement Score
+        tipos_evento:
+          items:
+            type: string
+          type: array
+          title: Tipos Evento
+        vocabulario:
+          items:
+            type: string
+          type: array
+          title: Vocabulario
+        ativo:
+          type: boolean
+          title: Ativo
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - slug
+      - nome
+      - idioma
+      - min_engagement_score
+      - ativo
+      - created_at
+      title: SocialNewsFrontendSegmentResponse
+    SocialNewsFrontendSegmentsResponse:
+      properties:
+        segments:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendSegmentResponse'
+          type: array
+          title: Segments
+      type: object
+      required:
+      - segments
+      title: SocialNewsFrontendSegmentsResponse
+    SocialNewsFrontendSourceResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        source_type:
+          type: string
+          title: Source Type
+        valor:
+          type: string
+          title: Valor
+        min_likes:
+          type: integer
+          title: Min Likes
+        min_reposts:
+          type: integer
+          title: Min Reposts
+        min_replies:
+          type: integer
+          title: Min Replies
+        min_impressions:
+          type: integer
+          title: Min Impressions
+        ativo:
+          type: boolean
+          title: Ativo
+        origem:
+          type: string
+          title: Origem
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - source_type
+      - valor
+      - min_likes
+      - min_reposts
+      - min_replies
+      - min_impressions
+      - ativo
+      - origem
+      - created_at
+      title: SocialNewsFrontendSourceResponse
+    SocialNewsFrontendSourcesResponse:
+      properties:
+        sources:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendSourceResponse'
+          type: array
+          title: Sources
+      type: object
+      required:
+      - sources
+      title: SocialNewsFrontendSourcesResponse
+    SocialNewsFrontendSubscriberCreate:
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        email:
+          type: string
+          format: email
+          title: Email
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Nome
+        origem:
+          type: string
+          maxLength: 80
+          title: Origem
+          default: manual
+      type: object
+      required:
+      - segment_id
+      - email
+      title: SocialNewsFrontendSubscriberCreate
+    SocialNewsFrontendSubscriberPatch:
+      properties:
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Nome
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - unsubscribed
+            - bounced
+            - complained
+            - removed
+          - type: 'null'
+          title: Status
+        metadata:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Metadata
+      type: object
+      title: SocialNewsFrontendSubscriberPatch
+    SocialNewsFrontendSubscriberResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        email:
+          type: string
+          title: Email
+        nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Nome
+        status:
+          type: string
+          title: Status
+        origem:
+          type: string
+          title: Origem
+        consent_status:
+          type: string
+          title: Consent Status
+        consent_given_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Consent Given At
+        consent_source:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Consent Source
+        unsubscribed_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Unsubscribed At
+        metadata:
+          additionalProperties: true
+          type: object
+          title: Metadata
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - segment_id
+      - email
+      - status
+      - origem
+      - consent_status
+      - metadata
+      - created_at
+      - updated_at
+      title: SocialNewsFrontendSubscriberResponse
+    SocialNewsFrontendSubscribersResponse:
+      properties:
+        subscribers:
+          items:
+            $ref: '#/components/schemas/SocialNewsFrontendSubscriberResponse'
+          type: array
+          title: Subscribers
+      type: object
+      required:
+      - subscribers
+      title: SocialNewsFrontendSubscribersResponse
     SocialNewsItemResponse:
       properties:
         id:
@@ -2647,6 +3812,30 @@ components:
       required:
       - job
       title: SocialNewsJobResponse
+    SocialNewsManualRunCreate:
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+      type: object
+      required:
+      - segment_id
+      title: SocialNewsManualRunCreate
+    SocialNewsManualRunResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        status:
+          type: string
+          title: Status
+      type: object
+      required:
+      - id
+      - status
+      title: SocialNewsManualRunResponse
     SocialNewsRunCreate:
       properties:
         segment_id:
@@ -2776,17 +3965,59 @@ components:
       - created_at
       - updated_at
       title: SocialNewsRunResponse
-    SocialNewsRunsResponse:
+    SocialNewsSchedulePatch:
       properties:
-        runs:
+        ativo:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ativo
+        scheduled_hour:
+          anyOf:
+          - type: integer
+            maximum: 23.0
+            minimum: 0.0
+          - type: 'null'
+          title: Scheduled Hour
+        scheduled_minute:
+          anyOf:
+          - type: integer
+            maximum: 59.0
+            minimum: 0.0
+          - type: 'null'
+          title: Scheduled Minute
+        confidence_score:
+          anyOf:
+          - type: number
+            maximum: 100.0
+            minimum: 0.0
+          - type: 'null'
+          title: Confidence Score
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 120
+            minLength: 1
+          - type: 'null'
+          title: Nome
+      type: object
+      title: SocialNewsSchedulePatch
+    SocialNewsScheduleRecalibrationResponse:
+      properties:
+        run_id:
+          type: string
+          format: uuid
+          title: Run Id
+        schedules:
           items:
-            $ref: '#/components/schemas/SocialNewsRunResponse'
+            $ref: '#/components/schemas/SocialNewsFrontendScheduleResponse'
           type: array
-          title: Runs
+          title: Schedules
       type: object
       required:
-      - runs
-      title: SocialNewsRunsResponse
+      - run_id
+      - schedules
+      title: SocialNewsScheduleRecalibrationResponse
     SocialNewsSegmentCreate:
       properties:
         slug:
@@ -2795,20 +4026,44 @@ components:
           minLength: 1
           title: Slug
         name:
-          type: string
-          maxLength: 180
-          minLength: 1
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
           title: Name
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Nome
+        idioma:
+          type: string
+          maxLength: 12
+          title: Idioma
+          default: pt
         description:
           anyOf:
           - type: string
           - type: 'null'
           title: Description
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
         base_knowledge:
           anyOf:
           - type: string
           - type: 'null'
           title: Base Knowledge
+        base_conhecimento:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Conhecimento
         disclaimer:
           anyOf:
           - type: string
@@ -2826,80 +4081,126 @@ components:
       type: object
       required:
       - slug
-      - name
       title: SocialNewsSegmentCreate
-    SocialNewsSegmentResponse:
+    SocialNewsSegmentFromSeedCreate:
+      properties:
+        seed_origem:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Seed Origem
+      type: object
+      required:
+      - seed_origem
+      title: SocialNewsSegmentFromSeedCreate
+    SocialNewsSegmentMutationResponse:
       properties:
         id:
           type: string
           format: uuid
           title: Id
-        tenant_id:
-          type: string
-          format: uuid
-          title: Tenant Id
         slug:
-          type: string
+          anyOf:
+          - type: string
+          - type: 'null'
           title: Slug
+        seed_origem:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Seed Origem
+        updated:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Updated
+      type: object
+      required:
+      - id
+      title: SocialNewsSegmentMutationResponse
+    SocialNewsSegmentPatch:
+      properties:
         name:
-          type: string
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
           title: Name
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Nome
         description:
           anyOf:
           - type: string
           - type: 'null'
           title: Description
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
         base_knowledge:
           anyOf:
           - type: string
           - type: 'null'
           title: Base Knowledge
+        base_conhecimento:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Base Conhecimento
         disclaimer:
           anyOf:
           - type: string
           - type: 'null'
           title: Disclaimer
-        min_engagement_score:
-          type: integer
-          title: Min Engagement Score
         status:
-          type: string
+          anyOf:
+          - type: string
+            enum:
+            - active
+            - inactive
+            - archived
+          - type: 'null'
           title: Status
+        ativo:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Ativo
+        min_engagement_score:
+          anyOf:
+          - type: integer
+            minimum: 0.0
+          - type: 'null'
+          title: Min Engagement Score
+        tipos_evento:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Tipos Evento
+        vocabulario:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Vocabulario
         config:
-          additionalProperties: true
-          type: object
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
           title: Config
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-        updated_at:
-          type: string
-          format: date-time
-          title: Updated At
       type: object
-      required:
-      - id
-      - tenant_id
-      - slug
-      - name
-      - min_engagement_score
-      - status
-      - config
-      - created_at
-      - updated_at
-      title: SocialNewsSegmentResponse
-    SocialNewsSegmentsResponse:
-      properties:
-        segments:
-          items:
-            $ref: '#/components/schemas/SocialNewsSegmentResponse'
-          type: array
-          title: Segments
-      type: object
-      required:
-      - segments
-      title: SocialNewsSegmentsResponse
+      title: SocialNewsSegmentPatch
     SocialNewsSourceCreate:
       properties:
         source_type:
@@ -2910,10 +4211,19 @@ components:
           - x_query
           title: Source Type
         value:
-          type: string
-          maxLength: 500
-          minLength: 1
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
           title: Value
+        valor:
+          anyOf:
+          - type: string
+            maxLength: 500
+            minLength: 1
+          - type: 'null'
+          title: Valor
         provider:
           type: string
           const: x
@@ -2923,17 +4233,17 @@ components:
           type: integer
           minimum: 0.0
           title: Min Likes
-          default: 0
+          default: 100
         min_reposts:
           type: integer
           minimum: 0.0
           title: Min Reposts
-          default: 0
+          default: 50
         min_replies:
           type: integer
           minimum: 0.0
           title: Min Replies
-          default: 0
+          default: 10
         min_impressions:
           type: integer
           minimum: 0.0
@@ -2946,86 +4256,17 @@ components:
       type: object
       required:
       - source_type
-      - value
       title: SocialNewsSourceCreate
-    SocialNewsSourceResponse:
+    SocialNewsSourceMutationResponse:
       properties:
         id:
           type: string
           format: uuid
           title: Id
-        tenant_id:
-          type: string
-          format: uuid
-          title: Tenant Id
-        segment_id:
-          type: string
-          format: uuid
-          title: Segment Id
-        provider:
-          type: string
-          title: Provider
-        source_type:
-          type: string
-          title: Source Type
-        value:
-          type: string
-          title: Value
-        min_likes:
-          type: integer
-          title: Min Likes
-        min_reposts:
-          type: integer
-          title: Min Reposts
-        min_replies:
-          type: integer
-          title: Min Replies
-        min_impressions:
-          type: integer
-          title: Min Impressions
-        status:
-          type: string
-          title: Status
-        metadata_json:
-          additionalProperties: true
-          type: object
-          title: Metadata Json
-        created_at:
-          type: string
-          format: date-time
-          title: Created At
-        updated_at:
-          type: string
-          format: date-time
-          title: Updated At
       type: object
       required:
       - id
-      - tenant_id
-      - segment_id
-      - provider
-      - source_type
-      - value
-      - min_likes
-      - min_reposts
-      - min_replies
-      - min_impressions
-      - status
-      - metadata_json
-      - created_at
-      - updated_at
-      title: SocialNewsSourceResponse
-    SocialNewsSourcesResponse:
-      properties:
-        sources:
-          items:
-            $ref: '#/components/schemas/SocialNewsSourceResponse'
-          type: array
-          title: Sources
-      type: object
-      required:
-      - sources
-      title: SocialNewsSourcesResponse
+      title: SocialNewsSourceMutationResponse
     SocialNewsStageDecisionRequest:
       properties:
         action:
@@ -3096,6 +4337,40 @@ components:
       - subscriber
       - unsubscribe_token
       title: SocialNewsSubscriberCreatedResponse
+    SocialNewsSubscriberCsvImportRequest:
+      properties:
+        segment_id:
+          type: string
+          format: uuid
+          title: Segment Id
+        csv_text:
+          type: string
+          minLength: 3
+          title: Csv Text
+      type: object
+      required:
+      - segment_id
+      - csv_text
+      title: SocialNewsSubscriberCsvImportRequest
+    SocialNewsSubscriberCsvImportResponse:
+      properties:
+        created:
+          type: integer
+          title: Created
+        skipped:
+          type: integer
+          title: Skipped
+        errors:
+          items:
+            type: string
+          type: array
+          title: Errors
+      type: object
+      required:
+      - created
+      - skipped
+      - errors
+      title: SocialNewsSubscriberCsvImportResponse
     SocialNewsSubscriberResponse:
       properties:
         id:
@@ -3189,6 +4464,17 @@ components:
           type: string
           format: uuid
           title: Subscriber Id
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        segment_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Segment Id
       type: object
       required:
       - status

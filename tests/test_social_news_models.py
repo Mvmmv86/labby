@@ -13,6 +13,7 @@ def test_social_news_metadata_tables_are_registered() -> None:
         "social_news_subscribers",
         "social_news_subscriber_consent_events",
         "social_news_dispatches",
+        "social_news_schedules",
     }.issubset(Base.metadata.tables)
 
 

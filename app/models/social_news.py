@@ -517,3 +517,105 @@ class SocialNewsDispatch(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class SocialNewsSchedule(Base):
+    __tablename__ = "social_news_schedules"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'inactive', 'archived')",
+            name="ck_social_news_schedules_status",
+        ),
+        CheckConstraint(
+            "day_of_week IS NULL OR (day_of_week >= 0 AND day_of_week <= 6)",
+            name="ck_social_news_schedules_day_of_week",
+        ),
+        CheckConstraint(
+            "window_start_hour >= 0 AND window_start_hour <= 23",
+            name="ck_social_news_schedules_window_start_hour",
+        ),
+        CheckConstraint(
+            "window_end_hour >= 1 AND window_end_hour <= 24",
+            name="ck_social_news_schedules_window_end_hour",
+        ),
+        CheckConstraint(
+            "scheduled_hour >= 0 AND scheduled_hour <= 23",
+            name="ck_social_news_schedules_scheduled_hour",
+        ),
+        CheckConstraint(
+            "scheduled_minute >= 0 AND scheduled_minute <= 59",
+            name="ck_social_news_schedules_scheduled_minute",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 100",
+            name="ck_social_news_schedules_confidence_score",
+        ),
+        CheckConstraint("samples_count >= 0", name="ck_social_news_schedules_samples_count"),
+        CheckConstraint(
+            "discovered_by IN ('ia', 'user', 'exploratorio_fixo')",
+            name="ck_social_news_schedules_discovered_by",
+        ),
+        Index(
+            "ix_social_news_schedules_tenant_segment_status",
+            "tenant_id",
+            "segment_id",
+            "status",
+        ),
+        Index("ix_social_news_schedules_next_run_at", "next_run_at"),
+        Index(
+            "uq_social_news_schedules_active_window",
+            "tenant_id",
+            "segment_id",
+            text("COALESCE(day_of_week, -1)"),
+            "window_start_hour",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    segment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_news_segments.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str | None] = mapped_column(String(120))
+    timezone: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="America/Sao_Paulo", server_default="America/Sao_Paulo"
+    )
+    day_of_week: Mapped[int | None] = mapped_column(Integer)
+    window_start_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    window_end_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    scheduled_hour: Mapped[int] = mapped_column(Integer, nullable=False)
+    scheduled_minute: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    confidence_score: Mapped[Decimal] = mapped_column(
+        Numeric(5, 2), nullable=False, server_default="45"
+    )
+    samples_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    average_score: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    discovered_by: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="user", server_default="user"
+    )
+    origin_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_news_runs.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="active", server_default="active"
+    )
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    updated_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

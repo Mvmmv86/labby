@@ -5,6 +5,7 @@ Data: 2026-06-01
 ## Entregue
 
 - Migration `004_social_news_foundation`.
+- Migration `005_social_news_schedules`.
 - Modelos SQLAlchemy para:
   - `social_news_segments`
   - `social_news_sources`
@@ -14,8 +15,12 @@ Data: 2026-06-01
   - `social_news_subscribers`
   - `social_news_subscriber_consent_events`
   - `social_news_dispatches`
+  - `social_news_schedules`
 - `SocialNewsService` tenant-scoped.
 - Endpoints em `/api/v2/labby/social/news/*`.
+- Endpoints compativeis com frontend para segmentos, sources, curator,
+  schedules, runs manuais/listagem/detalhe, subscribers flat/import CSV e
+  unsubscribe status/confirmacao.
 - Criacao de runs por job idempotente `social.news.capture`.
 - Enqueue de rewrite por job `social.news.rewrite`.
 - Enqueue de dispatch por job `social.news.dispatch`.
@@ -47,6 +52,8 @@ Data: 2026-06-01
 - Testes de modelos, service e rotas.
 - Teste E2E de contrato frontend para o fluxo stage 1 -> rewrite -> stage 2 ->
   dispatch.
+- Teste de paridade das rotas sociais que o frontend atual chama.
+- Teste cross-tenant negativo explicito para leitura de item tenant-scoped.
 
 ## Contrato da fatia
 
@@ -70,6 +77,25 @@ O dispatcher tambem roda um reaper para jobs presos em `running`, controlado por
 
 ## Contrato compativel com frontend atual
 
+- `GET /api/v2/labby/social/news/segments`
+- `GET /api/v2/labby/social/news/segments/{segment_id}`
+- `POST /api/v2/labby/social/news/segments`
+- `POST /api/v2/labby/social/news/segments/from-seed`
+- `PATCH /api/v2/labby/social/news/segments/{segment_id}`
+- `DELETE /api/v2/labby/social/news/segments/{segment_id}`
+- `GET /api/v2/labby/social/news/segments/{segment_id}/sources`
+- `POST /api/v2/labby/social/news/segments/{segment_id}/sources`
+- `DELETE /api/v2/labby/social/news/sources/{source_id}`
+- `GET /api/v2/labby/social/news/segments/{segment_id}/curator`
+- `PUT /api/v2/labby/social/news/segments/{segment_id}/curator`
+- `POST /api/v2/labby/social/news/runs/manual`
+- `GET /api/v2/labby/social/news/runs`
+- `GET /api/v2/labby/social/news/runs/{run_id}`
+- `GET /api/v2/labby/social/news/runs/{run_id}/items`
+- `GET /api/v2/labby/social/news/segments/{segment_id}/schedules`
+- `POST /api/v2/labby/social/news/segments/{segment_id}/schedules/recalibrate`
+- `PATCH /api/v2/labby/social/news/schedules/{schedule_id}`
+- `DELETE /api/v2/labby/social/news/schedules/{schedule_id}`
 - `GET /api/v2/labby/social/news/curation/stage1`
 - `GET /api/v2/labby/social/news/curation/stage2`
 - `GET /api/v2/labby/social/news/curation/ready`
@@ -79,11 +105,19 @@ O dispatcher tambem roda um reaper para jobs presos em `running`, controlado por
 - `POST /api/v2/labby/social/news/curation/items/{item_id}/stage2`
 - `POST /api/v2/labby/social/news/curation/runs/{run_id}/dispatch`
 - `GET /api/v2/labby/social/news/curation/dispatches`
+- `GET /api/v2/labby/social/news/subscribers`
+- `POST /api/v2/labby/social/news/subscribers`
+- `POST /api/v2/labby/social/news/subscribers/import-csv`
+- `PATCH /api/v2/labby/social/news/subscribers/{subscriber_id}`
+- `DELETE /api/v2/labby/social/news/subscribers/{subscriber_id}`
+- `GET /api/v2/labby/social/news/unsubscribe/{token}`
+- `POST /api/v2/labby/social/news/unsubscribe/{token}`
 
 ## Proxima fatia
 
 Proximas fatias:
 
-1. Classificacao por tipo de evento via IA.
-2. E2E X -> IA -> digest com providers reais em ambiente controlado.
+1. Smoke real X -> IA -> digest com secrets `LABBY_X_*`, `LABBY_AI_*` e
+   `LABBY_RESEND_*` em ambiente controlado.
+2. Classificacao por tipo de evento via IA.
 3. Webhooks de bounce/complaint do Resend persistidos em `webhook_events`.

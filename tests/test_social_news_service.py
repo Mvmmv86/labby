@@ -270,3 +270,17 @@ def test_approve_stage1_can_skip_rewrite_enqueue_for_frontend_parity() -> None:
     assert job is None
     assert job_queue.calls == []
     assert db.commits == 1
+
+
+def test_get_item_rejects_cross_tenant_row() -> None:
+    item_id = "77777777-7777-7777-7777-777777777777"
+    db = FakeSession([FakeResult(row=None)])
+    service = SocialNewsService(db=db, job_queue=FakeJobQueue())
+
+    with pytest.raises(HTTPException) as exc:
+        service.get_item(current=make_current(), item_id=item_id)
+
+    assert exc.value.status_code == 404
+    assert "tenant_id = :tenant_id" in db.calls[0][0]
+    assert db.calls[0][1]["tenant_id"] == "22222222-2222-2222-2222-222222222222"
+    assert db.calls[0][1]["item_id"] == item_id

@@ -20,10 +20,107 @@ class FakeSocialNewsService:
     def _assert_social_media_access(self, current):
         self.current = current
 
+    def list_segments(self, *, current, status=None, active=None, limit=50, offset=0):
+        self.current = current
+        return [make_segment_row()]
+
+    def create_segment_from_seed(self, *, current, seed_origem):
+        self.current = current
+        return make_segment_row(config={"idioma": "pt", "seed_origem": seed_origem})
+
+    def get_segment(self, *, current, segment_id):
+        self.current = current
+        return make_segment_row(id=UUID(str(segment_id)))
+
+    def update_segment(self, *, current, segment_id, patch):
+        self.current = current
+        return make_segment_row(id=UUID(str(segment_id)), **patch)
+
+    def delete_segment(self, *, current, segment_id):
+        self.current = current
+
+    def list_sources(self, *, current, segment_id):
+        self.current = current
+        return [make_source_row(segment_id=UUID(str(segment_id)))]
+
+    def add_source(
+        self,
+        *,
+        current,
+        segment_id,
+        source_type,
+        value,
+        provider="x",
+        min_likes=0,
+        min_reposts=0,
+        min_replies=0,
+        min_impressions=0,
+        metadata=None,
+    ):
+        self.current = current
+        return make_source_row(
+            segment_id=UUID(str(segment_id)),
+            source_type=source_type,
+            value=value,
+        )
+
+    def delete_source(self, *, current, source_id):
+        self.current = current
+
+    def get_curator(self, *, current, segment_id):
+        self.current = current
+        return make_curator_row(segment_id=UUID(str(segment_id)))
+
+    def upsert_curator(
+        self,
+        *,
+        current,
+        segment_id,
+        name,
+        model="gpt-4o-mini",
+        temperature=0.4,
+        max_tokens=600,
+        system_prompt=None,
+        base_knowledge=None,
+        active=None,
+    ):
+        self.current = current
+        return make_curator_row(
+            segment_id=UUID(str(segment_id)),
+            name=name,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            base_knowledge=base_knowledge,
+            status="active" if active is not False else "inactive",
+        )
+
     def start_run(self, *, current, segment_id, idempotency_key=None, run_type="manual"):
         self.current = current
         self.segment_id = segment_id
         return make_run_row(idempotency_key=idempotency_key or "manual:test"), make_job_record()
+
+    def list_runs(
+        self,
+        *,
+        current,
+        segment_id=None,
+        run_type=None,
+        status=None,
+        limit=50,
+        offset=0,
+    ):
+        self.current = current
+        return [make_run_row(run_type=run_type or "manual", status=status or "queued")]
+
+    def get_run(self, *, current, run_id):
+        self.current = current
+        return make_run_row(id=UUID(str(run_id)))
+
+    def list_run_items(self, *, current, run_id, status=None, limit=100):
+        self.current = current
+        return [make_item_row(run_id=UUID(str(run_id)), status=status or "ranked")]
 
     def list_items(
         self,
@@ -103,10 +200,80 @@ class FakeSocialNewsService:
         self.current = current
         return [make_dispatch_row(run_id=UUID(run_id) if run_id else None)]
 
+    def list_schedules(self, *, current, segment_id=None, active_only=False):
+        self.current = current
+        return [make_schedule_row(segment_id=UUID(str(segment_id)) if segment_id else None)]
+
+    def recalibrate_schedules(self, *, current, segment_id):
+        self.current = current
+        return (
+            make_run_row(run_type="calibration", status="succeeded"),
+            [make_schedule_row(segment_id=UUID(str(segment_id)))],
+        )
+
+    def update_schedule(self, *, current, schedule_id, patch):
+        self.current = current
+        return make_schedule_row(id=UUID(str(schedule_id)), **patch)
+
+    def delete_schedule(self, *, current, schedule_id):
+        self.current = current
+
+    def list_subscribers(
+        self,
+        *,
+        current,
+        segment_id=None,
+        status=None,
+        limit=100,
+        offset=0,
+    ):
+        self.current = current
+        if segment_id:
+            return [make_subscriber_row(segment_id=UUID(str(segment_id)))]
+        return [make_subscriber_row()]
+
+    def create_subscriber(
+        self,
+        *,
+        current,
+        segment_id,
+        email,
+        name=None,
+        origin="manual",
+        consent_source="admin",
+        metadata=None,
+    ):
+        self.current = current
+        return make_subscriber_row(
+            segment_id=UUID(str(segment_id)),
+            email_normalized=email,
+            name=name,
+            origin=origin,
+            metadata_json=metadata or {},
+            unsubscribe_token="subscriber.token",
+        )
+
+    def update_subscriber(self, *, current, subscriber_id, patch):
+        self.current = current
+        return make_subscriber_row(id=UUID(str(subscriber_id)), **patch)
+
+    def delete_subscriber(self, *, current, subscriber_id):
+        self.current = current
+
     def unsubscribe_by_token(self, *, token, ip=None, user_agent=None):
         return {
             "id": UUID("77777777-7777-7777-7777-777777777777"),
+            "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+            "email_normalized": "user@example.com",
             "status": "unsubscribed",
+        }
+
+    def resolve_unsubscribe_token(self, token):
+        return {
+            "id": UUID("77777777-7777-7777-7777-777777777777"),
+            "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+            "email_normalized": "user@example.com",
+            "status": "active",
         }
 
 
@@ -225,6 +392,118 @@ def make_current() -> CurrentMembership:
         role="admin",
         modules=("social_media",),
     )
+
+
+def make_segment_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("44444444-4444-4444-4444-444444444444"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "slug": "crypto",
+        "name": "Criptomoeda",
+        "description": "Noticias crypto",
+        "base_knowledge": None,
+        "disclaimer": None,
+        "min_engagement_score": 0,
+        "status": "active",
+        "config": {"idioma": "pt", "tipos_evento": [], "vocabulario": []},
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_source_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "provider": "x",
+        "source_type": "x_keyword",
+        "value": "bitcoin",
+        "min_likes": 0,
+        "min_reposts": 0,
+        "min_replies": 0,
+        "min_impressions": 0,
+        "status": "active",
+        "metadata_json": {"origem": "user"},
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_curator_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "name": "Editor",
+        "model": "gpt-4o-mini",
+        "temperature": 0.4,
+        "max_tokens": 600,
+        "system_prompt": None,
+        "base_knowledge": None,
+        "status": "active",
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_schedule_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("cccccccc-cccc-cccc-cccc-cccccccccccc"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "name": "Exploratorio diario 09:00",
+        "timezone": "America/Sao_Paulo",
+        "day_of_week": None,
+        "window_start_hour": 9,
+        "window_end_hour": 13,
+        "scheduled_hour": 9,
+        "scheduled_minute": 0,
+        "confidence_score": 45,
+        "samples_count": 0,
+        "average_score": None,
+        "discovered_by": "exploratorio_fixo",
+        "origin_run_id": None,
+        "status": "active",
+        "last_run_at": None,
+        "next_run_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_subscriber_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("dddddddd-dddd-dddd-dddd-dddddddddddd"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "email_normalized": "user@example.com",
+        "name": "User",
+        "status": "active",
+        "origin": "manual",
+        "consent_status": "granted",
+        "consent_source": "admin",
+        "consent_given_at": now,
+        "unsubscribed_at": None,
+        "metadata_json": {},
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
 
 
 def make_run_row(**overrides):
@@ -384,6 +663,8 @@ def test_unsubscribe_endpoint_is_public() -> None:
     assert response.json() == {
         "status": "unsubscribed",
         "subscriber_id": "77777777-7777-7777-7777-777777777777",
+        "email": "user@example.com",
+        "segment_id": "44444444-4444-4444-4444-444444444444",
     }
 
 
@@ -520,3 +801,100 @@ def test_frontend_curation_e2e_contract_from_stage1_to_dispatch() -> None:
     dispatches = client.get("/api/v2/labby/social/news/curation/dispatches")
     assert dispatches.status_code == 200
     assert dispatches.json()["dispatches"][0]["email"] == "user@example.com"
+
+
+def test_frontend_social_parity_routes_are_available() -> None:
+    client, _ = make_client()
+    segment_id = "44444444-4444-4444-4444-444444444444"
+    source_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    run_id = "55555555-5555-5555-5555-555555555555"
+    schedule_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+    subscriber_id = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+
+    assert client.get("/api/v2/labby/social/news/segments").status_code == 200
+    assert client.get(f"/api/v2/labby/social/news/segments/{segment_id}").status_code == 200
+    assert (
+        client.post(
+            "/api/v2/labby/social/news/segments/from-seed",
+            json={"seed_origem": "crypto_v1"},
+        ).status_code
+        == 201
+    )
+    assert (
+        client.patch(
+            f"/api/v2/labby/social/news/segments/{segment_id}",
+            json={"nome": "Crypto BR", "ativo": True},
+        ).status_code
+        == 200
+    )
+    assert client.get(f"/api/v2/labby/social/news/segments/{segment_id}/sources").status_code == 200
+    assert (
+        client.post(
+            f"/api/v2/labby/social/news/segments/{segment_id}/sources",
+            json={"source_type": "x_keyword", "valor": "bitcoin"},
+        ).status_code
+        == 201
+    )
+    assert client.delete(f"/api/v2/labby/social/news/sources/{source_id}").status_code == 204
+    assert client.get(f"/api/v2/labby/social/news/segments/{segment_id}/curator").status_code == 200
+    assert (
+        client.put(
+            f"/api/v2/labby/social/news/segments/{segment_id}/curator",
+            json={"nome": "Editor", "modelo": "gpt-4o-mini"},
+        ).status_code
+        == 200
+    )
+
+    manual_run = client.post(
+        "/api/v2/labby/social/news/runs/manual",
+        json={"segment_id": segment_id},
+    )
+    assert manual_run.status_code == 202
+    assert manual_run.json()["status"] == "capturando"
+    assert client.get("/api/v2/labby/social/news/runs").status_code == 200
+    assert client.get(f"/api/v2/labby/social/news/runs/{run_id}").status_code == 200
+    assert client.get(f"/api/v2/labby/social/news/runs/{run_id}/items").status_code == 200
+
+    schedules = client.get(f"/api/v2/labby/social/news/segments/{segment_id}/schedules")
+    assert schedules.status_code == 200
+    assert (
+        client.post(
+            f"/api/v2/labby/social/news/segments/{segment_id}/schedules/recalibrate",
+            json={},
+        ).status_code
+        == 202
+    )
+    assert (
+        client.patch(
+            f"/api/v2/labby/social/news/schedules/{schedule_id}",
+            json={"scheduled_hour": 10},
+        ).status_code
+        == 200
+    )
+    assert client.delete(f"/api/v2/labby/social/news/schedules/{schedule_id}").status_code == 204
+
+    assert client.get("/api/v2/labby/social/news/subscribers").status_code == 200
+    assert (
+        client.post(
+            "/api/v2/labby/social/news/subscribers",
+            json={"segment_id": segment_id, "email": "user@example.com", "nome": "User"},
+        ).status_code
+        == 201
+    )
+    assert (
+        client.post(
+            "/api/v2/labby/social/news/subscribers/import-csv",
+            json={"segment_id": segment_id, "csv_text": "email,nome\nnew@example.com,New"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.patch(
+            f"/api/v2/labby/social/news/subscribers/{subscriber_id}",
+            json={"status": "unsubscribed"},
+        ).status_code
+        == 200
+    )
+    delete_subscriber = client.delete(f"/api/v2/labby/social/news/subscribers/{subscriber_id}")
+    assert delete_subscriber.status_code == 204
+    assert client.get("/api/v2/labby/social/news/unsubscribe/token").status_code == 200

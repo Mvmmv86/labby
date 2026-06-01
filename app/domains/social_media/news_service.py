@@ -3,9 +3,10 @@ import hmac
 import json
 import re
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -22,6 +23,45 @@ SOCIAL_NEWS_REWRITE_JOB = "social.news.rewrite"
 SOCIAL_INGESTION_QUEUE = "worker-social-ingestion"
 SOCIAL_AI_QUEUE = "worker-ai"
 SOCIAL_EMAIL_QUEUE = "worker-email"
+DEFAULT_SCHEDULE_TIMEZONE = "America/Sao_Paulo"
+FIXED_EXPLORATORY_HOURS = (9, 14, 21)
+SOCIAL_NEWS_SEEDS: dict[str, dict[str, Any]] = {
+    "crypto_v1": {
+        "slug": "crypto",
+        "name": "Criptomoeda",
+        "idioma": "pt",
+        "description": "Noticias sobre Bitcoin, Ethereum, altcoins, regulacao e mercado cripto",
+        "seed_origem": "crypto_v1",
+        "disclaimer": (
+            "Este conteudo e informativo e nao constitui recomendacao financeira. "
+            "Faca sua propria pesquisa."
+        ),
+        "base_knowledge": None,
+        "vocabulario": [
+            "BTC",
+            "ETH",
+            "altcoin",
+            "DeFi",
+            "ETF",
+            "Halving",
+            "FOMC",
+            "SEC",
+            "CVM",
+            "stablecoin",
+        ],
+        "tipos_evento": [
+            "etf_approval",
+            "hack_exchange",
+            "regulacao_sec_cvm",
+            "halving",
+            "listagem_grande",
+            "lancamento_protocolo",
+        ],
+        "handles": [],
+        "keywords": ["bitcoin", "BTC", "ethereum", "ETH", "ETF", "SEC", "halving"],
+        "min_engagement_score": 0,
+    },
+}
 
 
 class SocialNewsService:
@@ -39,6 +79,7 @@ class SocialNewsService:
         *,
         current: CurrentMembership,
         status: str | None = None,
+        active: bool | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
@@ -49,9 +90,14 @@ class SocialNewsService:
             "limit": limit,
             "offset": offset,
         }
-        if status:
+        if status == "capturando":
+            where.append("status IN ('queued', 'capturing')")
+        elif status:
             where.append("status = :status")
             params["status"] = status
+        if active is not None:
+            where.append("status = :active_status")
+            params["active_status"] = "active" if active else "inactive"
 
         rows = self.db.execute(
             text(
@@ -59,7 +105,7 @@ class SocialNewsService:
                 SELECT *
                 FROM social_news_segments
                 WHERE {' AND '.join(where)}
-                ORDER BY created_at DESC
+                ORDER BY name ASC, created_at DESC
                 LIMIT :limit OFFSET :offset
                 """
             ),
@@ -133,6 +179,204 @@ class SocialNewsService:
             self.db.rollback()
             raise HTTPException(status_code=409, detail="Segmento ja existe") from exc
 
+    def create_segment_from_seed(
+        self,
+        *,
+        current: CurrentMembership,
+        seed_origem: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        seed = SOCIAL_NEWS_SEEDS.get(seed_origem)
+        if not seed:
+            available = ", ".join(sorted(SOCIAL_NEWS_SEEDS))
+            raise HTTPException(
+                status_code=404,
+                detail=f"seed_origem '{seed_origem}' nao registrado. Disponiveis: {available}",
+            )
+
+        config = {
+            "idioma": seed.get("idioma", "pt"),
+            "seed_origem": seed_origem,
+            "vocabulario": seed.get("vocabulario") or [],
+            "tipos_evento": seed.get("tipos_evento") or [],
+        }
+        try:
+            row = self.db.execute(
+                text(
+                    """
+                    INSERT INTO social_news_segments (
+                      tenant_id,
+                      slug,
+                      name,
+                      description,
+                      base_knowledge,
+                      disclaimer,
+                      min_engagement_score,
+                      config,
+                      created_by_membership_id,
+                      updated_by_membership_id
+                    )
+                    VALUES (
+                      :tenant_id,
+                      :slug,
+                      :name,
+                      :description,
+                      :base_knowledge,
+                      :disclaimer,
+                      :min_engagement_score,
+                      CAST(:config AS jsonb),
+                      :membership_id,
+                      :membership_id
+                    )
+                    RETURNING *
+                    """
+                ),
+                {
+                    "tenant_id": str(current.tenant_id),
+                    "slug": str(seed["slug"]),
+                    "name": str(seed["name"]),
+                    "description": seed.get("description"),
+                    "base_knowledge": seed.get("base_knowledge"),
+                    "disclaimer": seed.get("disclaimer"),
+                    "min_engagement_score": int(seed.get("min_engagement_score") or 0),
+                    "config": json.dumps(config),
+                    "membership_id": str(current.membership_id),
+                },
+            ).mappings().one()
+            segment = dict(row)
+
+            for handle in seed.get("handles") or []:
+                value = str(handle).strip()
+                if value and not _is_placeholder(value):
+                    self._insert_source(
+                        current=current,
+                        segment_id=str(segment["id"]),
+                        source_type="x_handle",
+                        value=value,
+                        metadata={"origem": "seed"},
+                    )
+            for keyword in seed.get("keywords") or []:
+                value = str(keyword).strip()
+                if value and not _is_placeholder(value):
+                    self._insert_source(
+                        current=current,
+                        segment_id=str(segment["id"]),
+                        source_type="x_keyword",
+                        value=value,
+                        metadata={"origem": "seed"},
+                    )
+
+            self.db.commit()
+            return segment
+        except IntegrityError as exc:
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail="Segmento ja existe") from exc
+
+    def get_segment(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        return self._get_segment(current.tenant_id, segment_id, active_only=False)
+
+    def update_segment(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+        patch: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        segment = self._get_segment(current.tenant_id, segment_id, active_only=False)
+        config = dict(segment.get("config") or {})
+        if "config" in patch and isinstance(patch["config"], Mapping):
+            config.update(dict(patch["config"]))
+        for key in ("idioma", "tipos_evento", "vocabulario"):
+            if key in patch:
+                config[key] = patch[key]
+
+        status = patch.get("status")
+        if "ativo" in patch and patch["ativo"] is not None:
+            status = "active" if patch["ativo"] else "inactive"
+        fields = {
+            "name": patch.get("name") or patch.get("nome"),
+            "description": patch.get("description")
+            if "description" in patch
+            else patch.get("descricao"),
+            "base_knowledge": patch.get("base_knowledge")
+            if "base_knowledge" in patch
+            else patch.get("base_conhecimento"),
+            "disclaimer": patch.get("disclaimer"),
+            "min_engagement_score": patch.get("min_engagement_score"),
+            "status": status,
+            "config": json.dumps(config),
+            "updated_by_membership_id": str(current.membership_id),
+        }
+        set_parts = [
+            f"{key} = :{key}"
+            for key, value in fields.items()
+            if value is not None or key == "config"
+        ]
+        set_parts.append("updated_at = NOW()")
+        row = self.db.execute(
+            text(
+                f"""
+                UPDATE social_news_segments
+                SET {', '.join(set_parts)}
+                WHERE tenant_id = :tenant_id
+                  AND id = :segment_id
+                RETURNING *
+                """
+            ),
+            {
+                **{
+                    key: value
+                    for key, value in fields.items()
+                    if value is not None or key == "config"
+                },
+                "tenant_id": str(current.tenant_id),
+                "segment_id": segment_id,
+            },
+        ).mappings().first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Segmento nao encontrado")
+        self.db.commit()
+        return dict(row)
+
+    def delete_segment(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+    ) -> None:
+        self._assert_social_media_access(current)
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_news_segments
+                SET status = 'inactive',
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :segment_id
+                  AND status = 'active'
+                RETURNING id
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "segment_id": segment_id,
+                "membership_id": str(current.membership_id),
+            },
+        ).first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Segmento nao encontrado")
+        self.db.commit()
+
     def list_sources(
         self,
         *,
@@ -148,6 +392,7 @@ class SocialNewsService:
                 FROM social_news_sources
                 WHERE tenant_id = :tenant_id
                   AND segment_id = :segment_id
+                  AND status <> 'archived'
                 ORDER BY created_at DESC
                 """
             ),
@@ -163,9 +408,9 @@ class SocialNewsService:
         source_type: str,
         value: str,
         provider: str = "x",
-        min_likes: int = 0,
-        min_reposts: int = 0,
-        min_replies: int = 0,
+        min_likes: int = 100,
+        min_reposts: int = 50,
+        min_replies: int = 10,
         min_impressions: int = 0,
         metadata: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -177,57 +422,149 @@ class SocialNewsService:
         self._get_segment(current.tenant_id, segment_id, active_only=False)
 
         try:
-            row = self.db.execute(
-                text(
-                    """
-                    INSERT INTO social_news_sources (
-                      tenant_id,
-                      segment_id,
-                      provider,
-                      source_type,
-                      value,
-                      min_likes,
-                      min_reposts,
-                      min_replies,
-                      min_impressions,
-                      metadata_json,
-                      created_by_membership_id
-                    )
-                    VALUES (
-                      :tenant_id,
-                      :segment_id,
-                      :provider,
-                      :source_type,
-                      :value,
-                      :min_likes,
-                      :min_reposts,
-                      :min_replies,
-                      :min_impressions,
-                      CAST(:metadata_json AS jsonb),
-                      :membership_id
-                    )
-                    RETURNING *
-                    """
-                ),
-                {
-                    "tenant_id": str(current.tenant_id),
-                    "segment_id": segment_id,
-                    "provider": provider,
-                    "source_type": source_type,
-                    "value": value.strip(),
-                    "min_likes": max(0, min_likes),
-                    "min_reposts": max(0, min_reposts),
-                    "min_replies": max(0, min_replies),
-                    "min_impressions": max(0, min_impressions),
-                    "metadata_json": json.dumps(dict(metadata or {})),
-                    "membership_id": str(current.membership_id),
-                },
-            ).mappings().one()
+            row = self._insert_source(
+                current=current,
+                segment_id=segment_id,
+                source_type=source_type,
+                value=value,
+                provider=provider,
+                min_likes=min_likes,
+                min_reposts=min_reposts,
+                min_replies=min_replies,
+                min_impressions=min_impressions,
+                metadata={"origem": "user", **dict(metadata or {})},
+            )
             self.db.commit()
             return dict(row)
         except IntegrityError as exc:
             self.db.rollback()
             raise HTTPException(status_code=409, detail="Fonte ja existe") from exc
+
+    def delete_source(
+        self,
+        *,
+        current: CurrentMembership,
+        source_id: str,
+    ) -> None:
+        self._assert_social_media_access(current)
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_news_sources
+                SET status = 'archived',
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :source_id
+                  AND status <> 'archived'
+                RETURNING id
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "source_id": source_id},
+        ).first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Fonte nao encontrada")
+        self.db.commit()
+
+    def get_curator(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        self._get_segment(current.tenant_id, segment_id, active_only=False)
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_news_curators
+                WHERE tenant_id = :tenant_id
+                  AND segment_id = :segment_id
+                  AND status <> 'archived'
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "segment_id": segment_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail="Curator nao configurado para este segmento",
+            )
+        return dict(row)
+
+    def upsert_curator(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+        name: str,
+        model: str = "gpt-4o-mini",
+        temperature: float = 0.4,
+        max_tokens: int = 600,
+        system_prompt: str | None = None,
+        base_knowledge: str | None = None,
+        active: bool | None = None,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        self._get_segment(current.tenant_id, segment_id, active_only=False)
+        status_value = "active" if active is not False else "inactive"
+        row = self.db.execute(
+            text(
+                """
+                INSERT INTO social_news_curators (
+                  tenant_id,
+                  segment_id,
+                  name,
+                  model,
+                  temperature,
+                  max_tokens,
+                  system_prompt,
+                  base_knowledge,
+                  status,
+                  updated_by_membership_id
+                )
+                VALUES (
+                  :tenant_id,
+                  :segment_id,
+                  :name,
+                  :model,
+                  :temperature,
+                  :max_tokens,
+                  :system_prompt,
+                  :base_knowledge,
+                  :status,
+                  :membership_id
+                )
+                ON CONFLICT (tenant_id, segment_id)
+                DO UPDATE SET
+                  name = EXCLUDED.name,
+                  model = EXCLUDED.model,
+                  temperature = EXCLUDED.temperature,
+                  max_tokens = EXCLUDED.max_tokens,
+                  system_prompt = EXCLUDED.system_prompt,
+                  base_knowledge = EXCLUDED.base_knowledge,
+                  status = EXCLUDED.status,
+                  updated_by_membership_id = EXCLUDED.updated_by_membership_id,
+                  updated_at = NOW()
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "segment_id": segment_id,
+                "name": name,
+                "model": model,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "system_prompt": system_prompt,
+                "base_knowledge": base_knowledge,
+                "status": status_value,
+                "membership_id": str(current.membership_id),
+            },
+        ).mappings().one()
+        self.db.commit()
+        return dict(row)
 
     def start_run(
         self,
@@ -303,6 +640,7 @@ class SocialNewsService:
         *,
         current: CurrentMembership,
         segment_id: str | None = None,
+        run_type: str | None = None,
         status: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -317,6 +655,9 @@ class SocialNewsService:
         if segment_id:
             where.append("segment_id = :segment_id")
             params["segment_id"] = segment_id
+        if run_type:
+            where.append("run_type = :run_type")
+            params["run_type"] = run_type
         if status:
             where.append("status = :status")
             params["status"] = status
@@ -334,6 +675,15 @@ class SocialNewsService:
             params,
         ).mappings().all()
         return [dict(row) for row in rows]
+
+    def get_run(
+        self,
+        *,
+        current: CurrentMembership,
+        run_id: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        return self._get_run(current.tenant_id, run_id)
 
     def list_run_items(
         self,
@@ -625,20 +975,22 @@ class SocialNewsService:
         self,
         *,
         current: CurrentMembership,
-        segment_id: str,
+        segment_id: str | None = None,
         status: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         self._assert_social_media_access(current)
-        self._get_segment(current.tenant_id, segment_id, active_only=False)
-        where = ["tenant_id = :tenant_id", "segment_id = :segment_id"]
+        where = ["tenant_id = :tenant_id"]
         params: dict[str, Any] = {
             "tenant_id": str(current.tenant_id),
-            "segment_id": segment_id,
             "limit": limit,
             "offset": offset,
         }
+        if segment_id:
+            self._get_segment(current.tenant_id, segment_id, active_only=False)
+            where.append("segment_id = :segment_id")
+            params["segment_id"] = segment_id
         if status:
             where.append("status = :status")
             params["status"] = status
@@ -655,6 +1007,97 @@ class SocialNewsService:
             params,
         ).mappings().all()
         return [dict(row) for row in rows]
+
+    def get_subscriber(
+        self,
+        *,
+        current: CurrentMembership,
+        subscriber_id: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_news_subscribers
+                WHERE tenant_id = :tenant_id
+                  AND id = :subscriber_id
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "subscriber_id": subscriber_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Subscriber nao encontrado")
+        return dict(row)
+
+    def update_subscriber(
+        self,
+        *,
+        current: CurrentMembership,
+        subscriber_id: str,
+        patch: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        fields: dict[str, Any] = {}
+        if "nome" in patch and patch["nome"] is not None:
+            fields["name"] = patch["nome"]
+        if "status" in patch and patch["status"] is not None:
+            fields["status"] = patch["status"]
+            if patch["status"] == "active":
+                fields["consent_status"] = "granted"
+                fields["unsubscribed_at"] = None
+            elif patch["status"] in {"unsubscribed", "removed"}:
+                fields["consent_status"] = "revoked"
+                fields["unsubscribed_at"] = datetime.now(UTC)
+        if "metadata" in patch and patch["metadata"] is not None:
+            fields["metadata_json"] = json.dumps(dict(patch["metadata"] or {}))
+        if not fields:
+            return self.get_subscriber(current=current, subscriber_id=subscriber_id)
+
+        set_clause = ", ".join(f"{key} = :{key}" for key in fields)
+        row = self.db.execute(
+            text(
+                f"""
+                UPDATE social_news_subscribers
+                SET {set_clause},
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :subscriber_id
+                RETURNING *
+                """
+            ),
+            {
+                **fields,
+                "tenant_id": str(current.tenant_id),
+                "subscriber_id": subscriber_id,
+            },
+        ).mappings().first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Subscriber nao encontrado")
+        updated = dict(row)
+        if "status" in patch:
+            self._record_consent_event(
+                tenant_id=str(current.tenant_id),
+                subscriber_id=str(updated["id"]),
+                event_type="reactivate" if patch["status"] == "active" else "admin_update",
+                consent_source="admin",
+                metadata={"status": patch["status"]},
+            )
+        self.db.commit()
+        return updated
+
+    def delete_subscriber(
+        self,
+        *,
+        current: CurrentMembership,
+        subscriber_id: str,
+    ) -> None:
+        self.update_subscriber(
+            current=current,
+            subscriber_id=subscriber_id,
+            patch={"status": "removed"},
+        )
 
     def get_item(
         self,
@@ -740,6 +1183,170 @@ class SocialNewsService:
             params,
         ).mappings().all()
         return [dict(row) for row in rows]
+
+    def list_schedules(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str | None = None,
+        active_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._assert_social_media_access(current)
+        where = ["tenant_id = :tenant_id"]
+        params: dict[str, Any] = {"tenant_id": str(current.tenant_id)}
+        if segment_id:
+            self._get_segment(current.tenant_id, segment_id, active_only=False)
+            where.append("segment_id = :segment_id")
+            params["segment_id"] = segment_id
+        if active_only:
+            where.append("status = 'active'")
+
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT *
+                FROM social_news_schedules
+                WHERE {' AND '.join(where)}
+                ORDER BY
+                  CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+                  COALESCE(day_of_week, 99),
+                  scheduled_hour,
+                  scheduled_minute,
+                  confidence_score DESC
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
+    def recalibrate_schedules(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        self._assert_social_media_access(current)
+        self._get_segment(current.tenant_id, segment_id, active_only=True)
+        run = self._create_calibration_run(current=current, segment_id=segment_id)
+        buckets = self._schedule_buckets(segment_id=segment_id, tenant_id=str(current.tenant_id))
+
+        for bucket in buckets[:3]:
+            self._upsert_schedule(
+                current=current,
+                segment_id=segment_id,
+                day_of_week=bucket["day_of_week"],
+                window_start_hour=bucket["window_start_hour"],
+                window_end_hour=min(int(bucket["window_start_hour"]) + 4, 24),
+                scheduled_hour=bucket["window_start_hour"],
+                scheduled_minute=0,
+                confidence_score=bucket["confidence_score"],
+                samples_count=bucket["samples_count"],
+                average_score=bucket["average_score"],
+                discovered_by="ia",
+                origin_run_id=str(run["id"]),
+                name=_schedule_name(bucket["day_of_week"], bucket["window_start_hour"]),
+            )
+
+        for hour in FIXED_EXPLORATORY_HOURS:
+            self._upsert_schedule(
+                current=current,
+                segment_id=segment_id,
+                day_of_week=None,
+                window_start_hour=hour,
+                window_end_hour=min(hour + 4, 24),
+                scheduled_hour=hour,
+                scheduled_minute=0,
+                confidence_score=45,
+                samples_count=0,
+                average_score=None,
+                discovered_by="exploratorio_fixo",
+                origin_run_id=str(run["id"]),
+                name=f"Exploratorio diario {hour:02d}:00",
+            )
+
+        self.db.commit()
+        return run, self.list_schedules(current=current, segment_id=segment_id)
+
+    def update_schedule(
+        self,
+        *,
+        current: CurrentMembership,
+        schedule_id: str,
+        patch: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        schedule = self._get_schedule(current.tenant_id, schedule_id)
+        fields: dict[str, Any] = {}
+        if "nome" in patch and patch["nome"] is not None:
+            fields["name"] = patch["nome"]
+        if "scheduled_hour" in patch and patch["scheduled_hour"] is not None:
+            fields["scheduled_hour"] = patch["scheduled_hour"]
+        if "scheduled_minute" in patch and patch["scheduled_minute"] is not None:
+            fields["scheduled_minute"] = patch["scheduled_minute"]
+        if "confidence_score" in patch and patch["confidence_score"] is not None:
+            fields["confidence_score"] = patch["confidence_score"]
+        if "ativo" in patch and patch["ativo"] is not None:
+            fields["status"] = "active" if patch["ativo"] else "inactive"
+        if not fields:
+            return schedule
+
+        merged = {**schedule, **fields}
+        fields["next_run_at"] = _next_schedule_run_at(merged)
+        fields["updated_by_membership_id"] = str(current.membership_id)
+        set_clause = ", ".join(f"{key} = :{key}" for key in fields)
+        row = self.db.execute(
+            text(
+                f"""
+                UPDATE social_news_schedules
+                SET {set_clause},
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :schedule_id
+                RETURNING *
+                """
+            ),
+            {
+                **fields,
+                "tenant_id": str(current.tenant_id),
+                "schedule_id": schedule_id,
+            },
+        ).mappings().first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Schedule nao encontrado")
+        self.db.commit()
+        return dict(row)
+
+    def delete_schedule(
+        self,
+        *,
+        current: CurrentMembership,
+        schedule_id: str,
+    ) -> None:
+        self._assert_social_media_access(current)
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_news_schedules
+                SET status = 'inactive',
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :schedule_id
+                  AND status = 'active'
+                RETURNING id
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "schedule_id": schedule_id,
+                "membership_id": str(current.membership_id),
+            },
+        ).first()
+        if not row:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Schedule nao encontrado")
+        self.db.commit()
 
     def create_subscriber(
         self,
@@ -915,6 +1522,340 @@ class SocialNewsService:
             token.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
+
+    def _insert_source(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+        source_type: str,
+        value: str,
+        provider: str = "x",
+        min_likes: int = 0,
+        min_reposts: int = 0,
+        min_replies: int = 0,
+        min_impressions: int = 0,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any]:
+        return self.db.execute(
+            text(
+                """
+                INSERT INTO social_news_sources (
+                  tenant_id,
+                  segment_id,
+                  provider,
+                  source_type,
+                  value,
+                  min_likes,
+                  min_reposts,
+                  min_replies,
+                  min_impressions,
+                  metadata_json,
+                  created_by_membership_id
+                )
+                VALUES (
+                  :tenant_id,
+                  :segment_id,
+                  :provider,
+                  :source_type,
+                  :value,
+                  :min_likes,
+                  :min_reposts,
+                  :min_replies,
+                  :min_impressions,
+                  CAST(:metadata_json AS jsonb),
+                  :membership_id
+                )
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "segment_id": segment_id,
+                "provider": provider,
+                "source_type": source_type,
+                "value": value.strip(),
+                "min_likes": max(0, min_likes),
+                "min_reposts": max(0, min_reposts),
+                "min_replies": max(0, min_replies),
+                "min_impressions": max(0, min_impressions),
+                "metadata_json": json.dumps(dict(metadata or {})),
+                "membership_id": str(current.membership_id),
+            },
+        ).mappings().one()
+
+    def _create_calibration_run(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+    ) -> dict[str, Any]:
+        idempotency_key = (
+            f"schedule-recalibrate:{segment_id}:"
+            f"{datetime.now(UTC).replace(second=0, microsecond=0).isoformat()}"
+        )
+        row = self.db.execute(
+            text(
+                """
+                INSERT INTO social_news_runs (
+                  tenant_id,
+                  membership_id,
+                  segment_id,
+                  run_type,
+                  status,
+                  idempotency_key,
+                  window_start_at,
+                  started_at,
+                  finished_at
+                )
+                VALUES (
+                  :tenant_id,
+                  :membership_id,
+                  :segment_id,
+                  'calibration',
+                  'succeeded',
+                  :idempotency_key,
+                  :window_start_at,
+                  NOW(),
+                  NOW()
+                )
+                ON CONFLICT (tenant_id, run_type, idempotency_key)
+                DO UPDATE SET updated_at = NOW()
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "membership_id": str(current.membership_id),
+                "segment_id": segment_id,
+                "idempotency_key": idempotency_key,
+                "window_start_at": datetime.now(UTC).replace(second=0, microsecond=0),
+            },
+        ).mappings().one()
+        return dict(row)
+
+    def _schedule_buckets(self, *, tenant_id: str, segment_id: str) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT published_at, ranking_score
+                FROM social_news_items
+                WHERE tenant_id = :tenant_id
+                  AND segment_id = :segment_id
+                  AND published_at IS NOT NULL
+                ORDER BY published_at DESC
+                LIMIT 1000
+                """
+            ),
+            {"tenant_id": tenant_id, "segment_id": segment_id},
+        ).mappings().all()
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=30)
+        grouped: dict[tuple[int, int], list[float]] = {}
+        for row in rows:
+            published_at = _coerce_datetime(row["published_at"])
+            if not published_at or published_at < cutoff:
+                continue
+            local_dt = published_at.replace(tzinfo=UTC).astimezone(
+                ZoneInfo(DEFAULT_SCHEDULE_TIMEZONE)
+            )
+            key = (local_dt.weekday(), (local_dt.hour // 4) * 4)
+            grouped.setdefault(key, []).append(float(row.get("ranking_score") or 0))
+
+        buckets = []
+        for (day, hour), scores in grouped.items():
+            average_score = sum(scores) / len(scores)
+            confidence_score = 45 + min(40, average_score / 150) + min(15, len(scores) * 3)
+            buckets.append(
+                {
+                    "day_of_week": day,
+                    "window_start_hour": hour,
+                    "samples_count": len(scores),
+                    "average_score": average_score,
+                    "max_score": max(scores),
+                    "confidence_score": round(min(99, confidence_score), 2),
+                }
+            )
+        return sorted(
+            buckets,
+            key=lambda bucket: (bucket["confidence_score"], bucket["max_score"]),
+            reverse=True,
+        )
+
+    def _upsert_schedule(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str,
+        day_of_week: int | None,
+        window_start_hour: int,
+        window_end_hour: int,
+        scheduled_hour: int,
+        scheduled_minute: int,
+        confidence_score: float,
+        samples_count: int,
+        average_score: float | None,
+        discovered_by: str,
+        origin_run_id: str,
+        name: str,
+    ) -> None:
+        existing = self._find_schedule(
+            tenant_id=str(current.tenant_id),
+            segment_id=segment_id,
+            day_of_week=day_of_week,
+            window_start_hour=window_start_hour,
+        )
+        payload = {
+            "tenant_id": str(current.tenant_id),
+            "segment_id": segment_id,
+            "name": name,
+            "timezone": DEFAULT_SCHEDULE_TIMEZONE,
+            "day_of_week": day_of_week,
+            "window_start_hour": window_start_hour,
+            "window_end_hour": window_end_hour,
+            "scheduled_hour": scheduled_hour,
+            "scheduled_minute": scheduled_minute,
+            "confidence_score": confidence_score,
+            "samples_count": samples_count,
+            "average_score": average_score,
+            "discovered_by": discovered_by,
+            "origin_run_id": origin_run_id,
+            "next_run_at": _next_schedule_run_at(
+                {
+                    "timezone": DEFAULT_SCHEDULE_TIMEZONE,
+                    "day_of_week": day_of_week,
+                    "scheduled_hour": scheduled_hour,
+                    "scheduled_minute": scheduled_minute,
+                }
+            ),
+            "membership_id": str(current.membership_id),
+        }
+        if existing:
+            self.db.execute(
+                text(
+                    """
+                    UPDATE social_news_schedules
+                    SET name = :name,
+                        window_end_hour = :window_end_hour,
+                        scheduled_hour = :scheduled_hour,
+                        scheduled_minute = :scheduled_minute,
+                        confidence_score = :confidence_score,
+                        samples_count = :samples_count,
+                        average_score = :average_score,
+                        discovered_by = :discovered_by,
+                        origin_run_id = :origin_run_id,
+                        status = 'active',
+                        next_run_at = :next_run_at,
+                        updated_by_membership_id = :membership_id,
+                        updated_at = NOW()
+                    WHERE tenant_id = :tenant_id
+                      AND id = :schedule_id
+                    """
+                ),
+                {**payload, "schedule_id": str(existing["id"])},
+            )
+            return
+
+        self.db.execute(
+            text(
+                """
+                INSERT INTO social_news_schedules (
+                  tenant_id,
+                  segment_id,
+                  name,
+                  timezone,
+                  day_of_week,
+                  window_start_hour,
+                  window_end_hour,
+                  scheduled_hour,
+                  scheduled_minute,
+                  confidence_score,
+                  samples_count,
+                  average_score,
+                  discovered_by,
+                  origin_run_id,
+                  status,
+                  next_run_at,
+                  created_by_membership_id,
+                  updated_by_membership_id
+                )
+                VALUES (
+                  :tenant_id,
+                  :segment_id,
+                  :name,
+                  :timezone,
+                  :day_of_week,
+                  :window_start_hour,
+                  :window_end_hour,
+                  :scheduled_hour,
+                  :scheduled_minute,
+                  :confidence_score,
+                  :samples_count,
+                  :average_score,
+                  :discovered_by,
+                  :origin_run_id,
+                  'active',
+                  :next_run_at,
+                  :membership_id,
+                  :membership_id
+                )
+                """
+            ),
+            payload,
+        )
+
+    def _find_schedule(
+        self,
+        *,
+        tenant_id: str,
+        segment_id: str,
+        day_of_week: int | None,
+        window_start_hour: int,
+    ) -> dict[str, Any] | None:
+        if day_of_week is None:
+            day_clause = "day_of_week IS NULL"
+            day_params: dict[str, Any] = {}
+        else:
+            day_clause = "day_of_week = :day_of_week"
+            day_params = {"day_of_week": day_of_week}
+        row = self.db.execute(
+            text(
+                f"""
+                SELECT *
+                FROM social_news_schedules
+                WHERE tenant_id = :tenant_id
+                  AND segment_id = :segment_id
+                  AND {day_clause}
+                  AND window_start_hour = :window_start_hour
+                ORDER BY
+                  CASE WHEN status = 'active' THEN 0 ELSE 1 END,
+                  id DESC
+                LIMIT 1
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "segment_id": segment_id,
+                "window_start_hour": window_start_hour,
+                **day_params,
+            },
+        ).mappings().first()
+        return dict(row) if row else None
+
+    def _get_schedule(self, tenant_id: UUID, schedule_id: str) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_news_schedules
+                WHERE tenant_id = :tenant_id
+                  AND id = :schedule_id
+                """
+            ),
+            {"tenant_id": str(tenant_id), "schedule_id": schedule_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Schedule nao encontrado")
+        return dict(row)
 
     def _attach_job(self, *, run_id: str, tenant_id: str, job: JobRecord) -> dict[str, Any]:
         row = self.db.execute(
@@ -1191,3 +2132,56 @@ def _normalize_slug(slug: str) -> str:
     value = (slug or "").strip().lower()
     value = re.sub(r"[^a-z0-9]+", "-", value)
     return value.strip("-")
+
+
+def _is_placeholder(value: str) -> bool:
+    return value.startswith("_PENDING_USER_INPUT_")
+
+
+def _schedule_name(day_of_week: int, hour: int) -> str:
+    labels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"]
+    return f"{labels[day_of_week]} {hour:02d}:00-{min(hour + 4, 24):02d}:00"
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except ValueError:
+            return None
+    return None
+
+
+def _next_schedule_run_at(
+    schedule: Mapping[str, Any],
+    *,
+    after: datetime | None = None,
+) -> datetime:
+    tz_name = str(schedule.get("timezone") or DEFAULT_SCHEDULE_TIMEZONE)
+    base_utc = (after or datetime.now(UTC)).astimezone(UTC)
+    base_local = base_utc.astimezone(ZoneInfo(tz_name))
+    hour = int(schedule.get("scheduled_hour") or 0)
+    minute = int(schedule.get("scheduled_minute") or 0)
+    day_of_week = schedule.get("day_of_week")
+
+    if day_of_week is None:
+        candidate = base_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if candidate <= base_local:
+            candidate += timedelta(days=1)
+    else:
+        wanted = int(day_of_week)
+        days_ahead = (wanted - base_local.weekday()) % 7
+        candidate = (base_local + timedelta(days=days_ahead)).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        if candidate <= base_local:
+            candidate += timedelta(days=7)
+
+    return candidate.astimezone(UTC)

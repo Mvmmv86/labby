@@ -364,13 +364,17 @@ Gate:
 
 Entregue localmente em 2026-06-01:
 
-- Migration `004_social_news_foundation`.
+- Migrations `004_social_news_foundation` e `005_social_news_schedules`.
 - Tabelas `social_news_segments`, `social_news_sources`,
   `social_news_curators`, `social_news_runs`, `social_news_items`,
   `social_news_subscribers`, `social_news_subscriber_consent_events` e
   `social_news_dispatches`.
+- Tabela `social_news_schedules`.
 - Endpoints `/api/v2/labby/social/news/*`, incluindo aliases
   `/api/v2/labby/social/news/curation/*` compativeis com o frontend atual.
+- Paridade do frontend para segmentos, seed `crypto_v1`, sources, curator,
+  schedules, runs manuais/listagem/detalhe, subscribers flat/import CSV e
+  unsubscribe GET/POST.
 - Aliases de curadoria devolvem nomes de campos e status esperados pelo
   frontend legado (`autor_handle`, `conteudo_original`, `ranqueado`,
   `reescrito`, `aprovado_stage2`).
@@ -390,6 +394,8 @@ Entregue localmente em 2026-06-01:
   esta configurado.
 - Dispatch Resend por worker com `social_news_dispatches`.
 - Subscribers com unsubscribe assinado e hash persistido.
+- Teste de paridade das rotas sociais chamadas pelo frontend atual.
+- Teste cross-tenant negativo explicito para item tenant-scoped.
 - Teste E2E de contrato frontend cobrindo stage 1, rewrite, stage 2, ready e
   dispatch.
 - Documento `docs/a2-social-current-handoff.md`.
