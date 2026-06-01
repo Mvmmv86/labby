@@ -2,7 +2,6 @@ openapi: 3.1.0
 info:
   title: Labby API
   version: 0.1.0
-  description: Contrato Labby gerado a partir da API FastAPI.
 paths:
   /health:
     get:
@@ -643,6 +642,69 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items:
+    get:
+      tags:
+      - social-news
+      summary: List Items
+      operationId: list_items_api_v2_labby_social_news_items_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: segment_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Segment Id
+      - name: run_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Run Id
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 200
+          minimum: 1
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsItemsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/social/news/runs/{run_id}/dispatch:
     post:
       tags:
@@ -671,6 +733,142 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SocialNewsJobResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items/{item_id}/approve-stage1:
+    post:
+      tags:
+      - social-news
+      summary: Approve Stage1
+      operationId: approve_stage1_api_v2_labby_social_news_items__item_id__approve_stage1_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SocialNewsCurationRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsCurationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items/{item_id}/reject-stage1:
+    post:
+      tags:
+      - social-news
+      summary: Reject Stage1
+      operationId: reject_stage1_api_v2_labby_social_news_items__item_id__reject_stage1_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SocialNewsCurationRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsCurationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items/{item_id}/approve-stage2:
+    post:
+      tags:
+      - social-news
+      summary: Approve Stage2
+      operationId: approve_stage2_api_v2_labby_social_news_items__item_id__approve_stage2_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsCurationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/social/news/items/{item_id}/reject-stage2:
+    post:
+      tags:
+      - social-news
+      summary: Reject Stage2
+      operationId: reject_stage2_api_v2_labby_social_news_items__item_id__reject_stage2_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Item Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SocialNewsCurationRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SocialNewsCurationResponse'
         '422':
           description: Validation Error
           content:
@@ -1579,6 +1777,34 @@ components:
       - token
       - senha
       title: ResetPasswordRequest
+    SocialNewsCurationRequest:
+      properties:
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 180
+          - type: 'null'
+          title: Idempotency Key
+        rejection_reason:
+          anyOf:
+          - type: string
+            maxLength: 2000
+          - type: 'null'
+          title: Rejection Reason
+      type: object
+      title: SocialNewsCurationRequest
+    SocialNewsCurationResponse:
+      properties:
+        item:
+          $ref: '#/components/schemas/SocialNewsItemResponse'
+        job:
+          anyOf:
+          - $ref: '#/components/schemas/EnqueuedJobResponse'
+          - type: 'null'
+      type: object
+      required:
+      - item
+      title: SocialNewsCurationResponse
     SocialNewsItemResponse:
       properties:
         id:
@@ -1638,6 +1864,17 @@ components:
           - type: string
           - type: 'null'
           title: Rewritten Content
+        rewritten_model:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rewritten Model
+        rewritten_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Rewritten At
         media_urls:
           items: {}
           type: array
@@ -1669,6 +1906,35 @@ components:
         status:
           type: string
           title: Status
+        approved_stage1_by_membership_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Approved Stage1 By Membership Id
+        approved_stage1_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Approved Stage1 At
+        approved_stage2_by_membership_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Approved Stage2 By Membership Id
+        approved_stage2_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Approved Stage2 At
+        rejection_reason:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Rejection Reason
         created_at:
           type: string
           format: date-time

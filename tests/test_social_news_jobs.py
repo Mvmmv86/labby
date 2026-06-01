@@ -8,6 +8,7 @@ from app.domains.social_media.news_service import (
     SOCIAL_NEWS_DISPATCH_JOB,
     SOCIAL_NEWS_REWRITE_JOB,
 )
+from app.integrations.ai import OpenAIResponsesRewriteClient
 from app.integrations.email import EmailService
 from app.integrations.x_api import TwitterApiIoAdapter, XAuthor, XPost
 
@@ -78,3 +79,46 @@ def test_generic_email_send_requires_resend_key(monkeypatch) -> None:
     assert result.sent is False
     assert result.error == "RESEND_API_KEY nao configurada"
     get_settings.cache_clear()
+
+
+def test_openai_responses_rewrite_client_parses_output_text(monkeypatch) -> None:
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "id": "resp_123",
+                "model": "gpt-4o-mini",
+                "output_text": "Texto final do digest.",
+                "usage": {"input_tokens": 20, "output_tokens": 8},
+            }
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr("app.integrations.ai.httpx.post", fake_post)
+    client = OpenAIResponsesRewriteClient(
+        api_key="key",
+        model="gpt-4o-mini",
+        timeout_seconds=1,
+    )
+
+    result = client.rewrite_news_item(
+        segment_name="Crypto",
+        base_knowledge="Contexto",
+        disclaimer="Nao e recomendacao financeira.",
+        original_content="Post original com informacao importante.",
+        external_url="https://x.com/labby/status/1",
+        author_handle="labby",
+    )
+
+    assert result.content == "Texto final do digest."
+    assert result.provider == "openai"
+    assert result.provider_response_id == "resp_123"
+    assert result.input_tokens == 20
+    assert result.output_tokens == 8
+    assert calls[0][1]["json"]["model"] == "gpt-4o-mini"
+    assert calls[0][1]["json"]["max_output_tokens"] == 700

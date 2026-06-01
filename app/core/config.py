@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     x_api_base_url: str | None = None
     x_api_timeout_seconds: float = 30.0
     twitterapi_io_key: str | None = None
+    ai_provider: str = "fallback"
+    ai_api_key: str | None = None
+    ai_model_default: str = "gpt-4o-mini"
+    ai_base_url: str = "https://api.openai.com/v1"
+    ai_timeout_seconds: float = 30.0
     social_news_capture_lookback_hours: int = 24
     social_news_max_source_requests_per_run: int = 10
     social_news_posts_per_source: int = 20

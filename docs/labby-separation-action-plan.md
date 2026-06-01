@@ -27,6 +27,7 @@ Ja existe um backend proprio da Labby em `C:\Users\marcu\labby-backend`.
 
 Commits locais relevantes:
 
+- `0003397 feat: add social news curation flow`
 - `afaa63c feat: add social news foundation`
 - `a9897d0 fix: configure package discovery for CI`
 - `a550fbf docs: update GitHub repository status`
@@ -325,7 +326,7 @@ Entregue localmente em 2026-06-01:
 
 ### A2 - Social atual transplantado
 
-Status: primeira fatia tecnica iniciada localmente.
+Status: fluxo tecnico principal iniciado localmente.
 
 Objetivo: portar o fluxo que ja existe hoje antes de criar a plataforma social
 multi-rede.
@@ -370,6 +371,10 @@ Entregue localmente em 2026-06-01:
 - Adapter X standalone para TwitterAPI.io com secrets `LABBY_*`.
 - Captura X por worker com dedupe, ranking por engagement e persistencia em
   `social_news_items`.
+- Curadoria operacional com listagem de itens e aprovar/rejeitar stage 1/stage 2.
+- Aprovacao stage 1 enfileira rewrite idempotente em `worker-ai`.
+- Rewrite tenta IA standalone via OpenAI quando configurada por `LABBY_AI_*`,
+  com fallback editorial seguro.
 - Dispatch Resend por worker com `social_news_dispatches`.
 - Subscribers com unsubscribe assinado e hash persistido.
 - Documento `docs/a2-social-current-handoff.md`.

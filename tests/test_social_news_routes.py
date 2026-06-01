@@ -19,6 +19,14 @@ class FakeSocialNewsService:
         self.segment_id = segment_id
         return make_run_row(idempotency_key=idempotency_key or "manual:test"), make_job_record()
 
+    def approve_stage1(self, *, current, item_id, idempotency_key=None):
+        self.current = current
+        return make_item_row(status="approved_stage1"), make_job_record(
+            job_type="social.news.rewrite",
+            queue_name="worker-ai",
+            idempotency_key="social.news.rewrite:item:test",
+        )
+
     def unsubscribe_by_token(self, *, token, ip=None, user_agent=None):
         return {
             "id": UUID("77777777-7777-7777-7777-777777777777"),
@@ -65,17 +73,59 @@ def make_run_row(**overrides):
     return row
 
 
-def make_job_record() -> JobRecord:
+def make_item_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("77777777-7777-7777-7777-777777777777"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "run_id": UUID("55555555-5555-5555-5555-555555555555"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "source_id": None,
+        "provider": "x",
+        "external_id": "x-1",
+        "external_url": "https://x.com/labby/status/1",
+        "published_at": now,
+        "author_handle": "labby",
+        "author_name": "Labby",
+        "original_content": "Labby captured an important update with enough content.",
+        "rewritten_content": None,
+        "rewritten_model": None,
+        "rewritten_at": None,
+        "media_urls": [],
+        "metrics": {},
+        "ranking_score": 42,
+        "ranking_reason": "score alto",
+        "ranking_source": "engagement",
+        "type_match": None,
+        "status": "ranked",
+        "approved_stage1_by_membership_id": None,
+        "approved_stage1_at": None,
+        "approved_stage2_by_membership_id": None,
+        "approved_stage2_at": None,
+        "rejection_reason": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_job_record(
+    *,
+    job_type: str = "social.news.capture",
+    queue_name: str = "worker-social-ingestion",
+    idempotency_key: str = "social.news.capture:manual:test",
+) -> JobRecord:
     now = datetime(2026, 6, 1, tzinfo=UTC)
     return JobRecord(
         id="66666666-6666-6666-6666-666666666666",
         tenant_id="22222222-2222-2222-2222-222222222222",
         membership_id="33333333-3333-3333-3333-333333333333",
-        job_type="social.news.capture",
-        queue_name="worker-social-ingestion",
+        job_type=job_type,
+        queue_name=queue_name,
         status="pending",
         priority=10,
-        idempotency_key="social.news.capture:manual:test",
+        idempotency_key=idempotency_key,
         payload={},
         result=None,
         error_code=None,
@@ -131,3 +181,18 @@ def test_unsubscribe_endpoint_is_public() -> None:
         "status": "unsubscribed",
         "subscriber_id": "77777777-7777-7777-7777-777777777777",
     }
+
+
+def test_approve_stage1_returns_item_and_rewrite_job() -> None:
+    client, _ = make_client()
+
+    response = client.post(
+        "/api/v2/labby/social/news/items/77777777-7777-7777-7777-777777777777/approve-stage1",
+        json={},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["item"]["status"] == "approved_stage1"
+    assert body["job"]["job_type"] == "social.news.rewrite"
+    assert body["job"]["queue_name"] == "worker-ai"

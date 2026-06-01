@@ -7,8 +7,10 @@ from fastapi import HTTPException
 from app.core.dependencies import CurrentMembership
 from app.domains.jobs.job_service import JobRecord
 from app.domains.social_media.news_service import (
+    SOCIAL_AI_QUEUE,
     SOCIAL_INGESTION_QUEUE,
     SOCIAL_NEWS_CAPTURE_JOB,
+    SOCIAL_NEWS_REWRITE_JOB,
     SocialNewsService,
 )
 
@@ -109,6 +111,43 @@ def make_run_row(**overrides):
     return row
 
 
+def make_item_row(**overrides):
+    now = datetime(2026, 6, 1, tzinfo=UTC)
+    row = {
+        "id": UUID("77777777-7777-7777-7777-777777777777"),
+        "tenant_id": UUID("22222222-2222-2222-2222-222222222222"),
+        "run_id": UUID("55555555-5555-5555-5555-555555555555"),
+        "segment_id": UUID("44444444-4444-4444-4444-444444444444"),
+        "source_id": None,
+        "provider": "x",
+        "external_id": "x-1",
+        "external_url": "https://x.com/labby/status/1",
+        "published_at": now,
+        "author_handle": "labby",
+        "author_name": "Labby",
+        "original_content": "Labby captured an important update with enough content.",
+        "rewritten_content": None,
+        "rewritten_model": None,
+        "rewritten_at": None,
+        "media_urls": [],
+        "metrics": {},
+        "ranking_score": 42,
+        "ranking_reason": "score alto",
+        "ranking_source": "engagement",
+        "type_match": None,
+        "status": "ranked",
+        "approved_stage1_by_membership_id": None,
+        "approved_stage1_at": None,
+        "approved_stage2_by_membership_id": None,
+        "approved_stage2_at": None,
+        "rejection_reason": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
 def make_job_record(**kwargs):
     now = datetime(2026, 6, 1, tzinfo=UTC)
     return JobRecord(
@@ -178,3 +217,31 @@ def test_start_run_creates_tenant_scoped_capture_job() -> None:
         "provider": "x",
     }
     assert "ON CONFLICT (tenant_id, run_type, idempotency_key)" in db.calls[1][0]
+
+
+def test_approve_stage1_moves_item_and_enqueues_rewrite_job() -> None:
+    item_id = "77777777-7777-7777-7777-777777777777"
+    db = FakeSession(
+        [
+            FakeResult(row=make_item_row(status="ranked")),
+            FakeResult(row=make_item_row(status="approved_stage1")),
+            FakeResult(),
+            FakeResult(),
+        ]
+    )
+    job_queue = FakeJobQueue()
+    service = SocialNewsService(db=db, job_queue=job_queue)
+
+    item, job = service.approve_stage1(current=make_current(), item_id=item_id)
+
+    assert item["status"] == "approved_stage1"
+    assert job is not None
+    assert job.job_type == SOCIAL_NEWS_REWRITE_JOB
+    assert job.queue_name == SOCIAL_AI_QUEUE
+    assert job_queue.calls[0]["payload"] == {
+        "item_id": item_id,
+        "run_id": "55555555-5555-5555-5555-555555555555",
+        "segment_id": "44444444-4444-4444-4444-444444444444",
+    }
+    assert "FOR UPDATE" in db.calls[0][0]
+    assert "status = :status" in db.calls[1][0]

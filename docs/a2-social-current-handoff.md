@@ -1,4 +1,4 @@
-# A2 - Social atual: primeira fatia tecnica
+# A2 - Social atual: handoff tecnico
 
 Data: 2026-06-01
 
@@ -26,6 +26,13 @@ Data: 2026-06-01
   engagement e persistencia em `social_news_items`.
 - Dispatch por worker usando Resend via `EmailService.send_email`.
 - Subscribers com token de unsubscribe assinado e hash persistido.
+- Fila de curadoria por endpoints de listagem geral de itens.
+- Aprovacao/rejeicao stage 1 e stage 2 com transicoes tenant-scoped.
+- Aprovacao stage 1 enfileira rewrite idempotente no `worker-ai`.
+- Rewrite tenta IA standalone via OpenAI Responses API quando
+  `LABBY_AI_PROVIDER=openai` e `LABBY_AI_API_KEY` estao configurados.
+- Rewrite mantém fallback editorial persistido se a IA estiver desabilitada,
+  mal configurada ou indisponivel.
 - Testes de modelos, service e rotas.
 
 ## Contrato da fatia
@@ -49,7 +56,6 @@ Fluxo atual:
 
 Proximas fatias:
 
-1. Trocar rewrite fallback por chamada real de IA standalone.
-2. Adicionar endpoints de aprovacao/rejeicao stage 1 e stage 2.
-3. Classificacao por tipo de evento via IA.
-4. E2E X -> IA -> digest.
+1. Classificacao por tipo de evento via IA.
+2. E2E X -> IA -> digest com providers reais em ambiente controlado.
+3. Webhooks de bounce/complaint do Resend persistidos em `webhook_events`.

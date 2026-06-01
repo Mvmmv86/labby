@@ -62,6 +62,8 @@ Secrets previstos para as proximas fatias:
 - `LABBY_AI_PROVIDER`
 - `LABBY_AI_API_KEY`
 - `LABBY_AI_MODEL_DEFAULT`
+- `LABBY_AI_BASE_URL`
+- `LABBY_AI_TIMEOUT_SECONDS`
 
 Regras:
 
@@ -69,6 +71,10 @@ Regras:
 - Retry deve acontecer por job, nao dentro da request HTTP.
 - Logs devem incluir `tenant_id`, `job_id`, `provider` e `external_id` quando
   existir.
+- `LABBY_AI_PROVIDER=fallback` desliga a chamada externa e usa rewrite editorial
+  deterministico.
+- `LABBY_AI_PROVIDER=openai` usa a Responses API da OpenAI com
+  `LABBY_AI_API_KEY`; falhas do provider caem para fallback sem quebrar o job.
 
 ## GitHub
 

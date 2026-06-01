@@ -26,6 +26,13 @@ from app.domains.social_media.news_service import (
     SOCIAL_NEWS_DISPATCH_JOB,
     SOCIAL_NEWS_REWRITE_JOB,
 )
+from app.integrations.ai import (
+    AIRewriteClient,
+    AIRewriteError,
+    AIRewriteResult,
+    FallbackAIRewriteClient,
+    make_ai_rewrite_client,
+)
 from app.integrations.email import EmailService
 from app.integrations.x_api import (
     XApiAuthError,
@@ -67,12 +74,14 @@ class SocialNewsJobProcessor:
         settings: Settings | None = None,
         sorter: NewsEngagementSorter | None = None,
         x_client_factory: Callable[[Settings], XApiClient] = make_x_client,
+        ai_client_factory: Callable[[Settings], AIRewriteClient] = make_ai_rewrite_client,
         email_service: EmailService | None = None,
     ) -> None:
         self.db = db
         self.settings = settings or get_settings()
         self.sorter = sorter or NewsEngagementSorter()
         self.x_client_factory = x_client_factory
+        self.ai_client_factory = ai_client_factory
         self.email_service = email_service or EmailService()
 
     def capture(self, context: JobExecutionContext) -> dict[str, Any]:
@@ -140,7 +149,7 @@ class SocialNewsJobProcessor:
         if item["status"] not in {"approved_stage1", "rewritten"}:
             raise PermanentJobError("Item precisa estar aprovado no stage 1")
 
-        content = self._fallback_rewrite(item)
+        result = self._rewrite_with_provider(item)
         self.db.execute(
             text(
                 """
@@ -157,8 +166,8 @@ class SocialNewsJobProcessor:
             {
                 "tenant_id": context.tenant_id,
                 "item_id": item_id,
-                "content": content,
-                "model": "fallback-editorial",
+                "content": result.content,
+                "model": result.model,
             },
         )
         self.db.execute(
@@ -170,15 +179,29 @@ class SocialNewsJobProcessor:
                         THEN 'curation_stage2'
                         ELSE status
                     END,
+                    ai_cost_usd = ai_cost_usd + :ai_cost_usd,
+                    estimated_cost_usd = estimated_cost_usd + :ai_cost_usd,
                     updated_at = NOW()
                 WHERE tenant_id = :tenant_id
                   AND id = :run_id
                 """
             ),
-            {"tenant_id": context.tenant_id, "run_id": str(item["run_id"])},
+            {
+                "tenant_id": context.tenant_id,
+                "run_id": str(item["run_id"]),
+                "ai_cost_usd": result.cost_usd,
+            },
         )
         self.db.commit()
-        return {"item_id": item_id, "status": "rewritten", "model": "fallback-editorial"}
+        return {
+            "item_id": item_id,
+            "status": "rewritten",
+            "model": result.model,
+            "provider": result.provider,
+            "provider_response_id": result.provider_response_id,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+        }
 
     def dispatch(self, context: JobExecutionContext) -> dict[str, Any]:
         run_id = self._payload_id(context, "run_id")
@@ -704,6 +727,33 @@ class SocialNewsJobProcessor:
             {"run_id": run_id, "error_code": error_code, "error_message": error_message[:2000]},
         )
         self.db.commit()
+
+    def _rewrite_with_provider(self, item: dict[str, Any]) -> AIRewriteResult:
+        try:
+            client = self.ai_client_factory(self.settings)
+            return client.rewrite_news_item(
+                segment_name=str(item.get("segment_name") or "Noticias"),
+                base_knowledge=str(item.get("base_knowledge") or "") or None,
+                disclaimer=str(item.get("disclaimer") or "") or None,
+                original_content=str(item.get("original_content") or ""),
+                external_url=str(item.get("external_url") or "") or None,
+                author_handle=str(item.get("author_handle") or "") or None,
+            )
+        except AIRewriteError as exc:
+            logger.warning(
+                "social_news_rewrite_provider_failed item_id=%s provider=%s error=%s",
+                item.get("id"),
+                self.settings.ai_provider,
+                exc,
+            )
+            return FallbackAIRewriteClient().rewrite_news_item(
+                segment_name=str(item.get("segment_name") or "Noticias"),
+                base_knowledge=str(item.get("base_knowledge") or "") or None,
+                disclaimer=str(item.get("disclaimer") or "") or None,
+                original_content=str(item.get("original_content") or ""),
+                external_url=str(item.get("external_url") or "") or None,
+                author_handle=str(item.get("author_handle") or "") or None,
+            )
 
     def _fallback_rewrite(self, item: dict[str, Any]) -> str:
         author = html.escape(str(item.get("author_handle") or "fonte"))

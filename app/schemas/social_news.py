@@ -125,6 +125,8 @@ class SocialNewsItemResponse(BaseModel):
     author_name: str | None = None
     original_content: str
     rewritten_content: str | None = None
+    rewritten_model: str | None = None
+    rewritten_at: datetime | None = None
     media_urls: list[Any]
     metrics: dict[str, Any]
     ranking_score: int | None = None
@@ -132,6 +134,11 @@ class SocialNewsItemResponse(BaseModel):
     ranking_source: str | None = None
     type_match: str | None = None
     status: str
+    approved_stage1_by_membership_id: UUID | None = None
+    approved_stage1_at: datetime | None = None
+    approved_stage2_by_membership_id: UUID | None = None
+    approved_stage2_at: datetime | None = None
+    rejection_reason: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -140,12 +147,22 @@ class SocialNewsItemsResponse(BaseModel):
     items: list[SocialNewsItemResponse]
 
 
+class SocialNewsCurationRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=180)
+    rejection_reason: str | None = Field(default=None, max_length=2000)
+
+
 class SocialNewsJobRequest(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=180)
 
 
 class SocialNewsJobResponse(BaseModel):
     job: EnqueuedJobResponse
+
+
+class SocialNewsCurationResponse(BaseModel):
+    item: SocialNewsItemResponse
+    job: EnqueuedJobResponse | None = None
 
 
 class SocialNewsSubscriberCreate(BaseModel):

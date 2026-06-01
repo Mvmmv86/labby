@@ -369,6 +369,49 @@ class SocialNewsService:
         ).mappings().all()
         return [dict(row) for row in rows]
 
+    def list_items(
+        self,
+        *,
+        current: CurrentMembership,
+        segment_id: str | None = None,
+        run_id: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        self._assert_social_media_access(current)
+        where = ["tenant_id = :tenant_id"]
+        params: dict[str, Any] = {
+            "tenant_id": str(current.tenant_id),
+            "limit": limit,
+            "offset": offset,
+        }
+        if segment_id:
+            self._get_segment(current.tenant_id, segment_id, active_only=False)
+            where.append("segment_id = :segment_id")
+            params["segment_id"] = segment_id
+        if run_id:
+            self._get_run(current.tenant_id, run_id)
+            where.append("run_id = :run_id")
+            params["run_id"] = run_id
+        if status:
+            where.append("status = :status")
+            params["status"] = status
+
+        rows = self.db.execute(
+            text(
+                f"""
+                SELECT *
+                FROM social_news_items
+                WHERE {' AND '.join(where)}
+                ORDER BY COALESCE(ranking_score, 0) DESC, created_at DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            params,
+        ).mappings().all()
+        return [dict(row) for row in rows]
+
     def enqueue_dispatch(
         self,
         *,
@@ -403,21 +446,169 @@ class SocialNewsService:
     ) -> JobRecord:
         self._assert_social_media_access(current)
         item = self._get_item(current.tenant_id, item_id)
+        if item["status"] not in {"approved_stage1", "rewritten"}:
+            raise HTTPException(status_code=409, detail="Item precisa estar aprovado no stage 1")
         selected_idempotency = idempotency_key or f"item:{item_id}:rewrite"
-        return self.job_queue.enqueue_job(
+        self._mark_run_rewriting(tenant_id=str(current.tenant_id), run_id=str(item["run_id"]))
+        return self._enqueue_rewrite_job(
             tenant_id=str(current.tenant_id),
             membership_id=str(current.membership_id),
-            job_type=SOCIAL_NEWS_REWRITE_JOB,
-            queue_name=SOCIAL_AI_QUEUE,
-            idempotency_key=f"{SOCIAL_NEWS_REWRITE_JOB}:{selected_idempotency}",
-            payload={
-                "item_id": str(item["id"]),
-                "run_id": str(item["run_id"]),
-                "segment_id": str(item["segment_id"]),
-            },
-            priority=5,
-            max_attempts=3,
+            item=item,
+            idempotency_key=selected_idempotency,
         )
+
+    def approve_stage1(
+        self,
+        *,
+        current: CurrentMembership,
+        item_id: str,
+        idempotency_key: str | None = None,
+    ) -> tuple[dict[str, Any], JobRecord | None]:
+        self._assert_social_media_access(current)
+        item = self._get_item_for_update(current.tenant_id, item_id)
+        if item["status"] == "ranked":
+            item = self._update_item_status(
+                tenant_id=str(current.tenant_id),
+                item_id=item_id,
+                status="approved_stage1",
+                membership_id=str(current.membership_id),
+                approved_stage="stage1",
+                rejection_reason=None,
+            )
+            self._sync_run_approval_counts(
+                tenant_id=str(current.tenant_id),
+                run_id=str(item["run_id"]),
+            )
+            self._mark_run_rewriting(
+                tenant_id=str(current.tenant_id),
+                run_id=str(item["run_id"]),
+            )
+            self.db.commit()
+            selected_idempotency = idempotency_key or f"item:{item_id}:rewrite"
+            job = self._enqueue_rewrite_job(
+                tenant_id=str(current.tenant_id),
+                membership_id=str(current.membership_id),
+                item=item,
+                idempotency_key=selected_idempotency,
+            )
+            return item, job
+
+        self.db.commit()
+        if item["status"] == "approved_stage1":
+            self._mark_run_rewriting(
+                tenant_id=str(current.tenant_id),
+                run_id=str(item["run_id"]),
+            )
+            selected_idempotency = idempotency_key or f"item:{item_id}:rewrite"
+            job = self._enqueue_rewrite_job(
+                tenant_id=str(current.tenant_id),
+                membership_id=str(current.membership_id),
+                item=item,
+                idempotency_key=selected_idempotency,
+            )
+            return item, job
+        if item["status"] in {"rewritten", "approved_stage2", "sent"}:
+            return item, None
+        raise HTTPException(status_code=409, detail="Item nao esta pronto para stage 1")
+
+    def reject_stage1(
+        self,
+        *,
+        current: CurrentMembership,
+        item_id: str,
+        rejection_reason: str | None = None,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        item = self._get_item_for_update(current.tenant_id, item_id)
+        if item["status"] == "rejected_stage1":
+            self.db.commit()
+            return item
+        if item["status"] != "ranked":
+            self.db.commit()
+            raise HTTPException(
+                status_code=409,
+                detail="Item nao esta pronto para rejeicao stage 1",
+            )
+
+        updated = self._update_item_status(
+            tenant_id=str(current.tenant_id),
+            item_id=item_id,
+            status="rejected_stage1",
+            membership_id=str(current.membership_id),
+            approved_stage=None,
+            rejection_reason=rejection_reason,
+        )
+        self._sync_run_approval_counts(
+            tenant_id=str(current.tenant_id),
+            run_id=str(updated["run_id"]),
+        )
+        self.db.commit()
+        return updated
+
+    def approve_stage2(
+        self,
+        *,
+        current: CurrentMembership,
+        item_id: str,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        item = self._get_item_for_update(current.tenant_id, item_id)
+        if item["status"] in {"approved_stage2", "sent"}:
+            self.db.commit()
+            return item
+        if item["status"] != "rewritten":
+            self.db.commit()
+            raise HTTPException(status_code=409, detail="Item precisa estar reescrito")
+
+        updated = self._update_item_status(
+            tenant_id=str(current.tenant_id),
+            item_id=item_id,
+            status="approved_stage2",
+            membership_id=str(current.membership_id),
+            approved_stage="stage2",
+            rejection_reason=None,
+        )
+        self._sync_run_approval_counts(
+            tenant_id=str(current.tenant_id),
+            run_id=str(updated["run_id"]),
+        )
+        self.db.commit()
+        return updated
+
+    def reject_stage2(
+        self,
+        *,
+        current: CurrentMembership,
+        item_id: str,
+        rejection_reason: str | None = None,
+    ) -> dict[str, Any]:
+        self._assert_social_media_access(current)
+        item = self._get_item_for_update(current.tenant_id, item_id)
+        if item["status"] == "rejected_stage2":
+            self.db.commit()
+            return item
+        if item["status"] not in {"rewritten", "approved_stage2"}:
+            self.db.commit()
+            raise HTTPException(
+                status_code=409,
+                detail="Item nao esta pronto para rejeicao stage 2",
+            )
+
+        updated = self._update_item_status(
+            tenant_id=str(current.tenant_id),
+            item_id=item_id,
+            status="rejected_stage2",
+            membership_id=str(current.membership_id),
+            approved_stage=None,
+            rejection_reason=rejection_reason,
+            clear_stage2_approval=True,
+        )
+        self._sync_run_approval_counts(
+            tenant_id=str(current.tenant_id),
+            run_id=str(updated["run_id"]),
+        )
+        self.db.commit()
+        return updated
 
     def list_subscribers(
         self,
@@ -695,6 +886,145 @@ class SocialNewsService:
         if not row:
             raise HTTPException(status_code=404, detail="Item nao encontrado")
         return dict(row)
+
+    def _get_item_for_update(self, tenant_id: UUID, item_id: str) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_news_items
+                WHERE tenant_id = :tenant_id
+                  AND id = :item_id
+                FOR UPDATE
+                """
+            ),
+            {"tenant_id": str(tenant_id), "item_id": item_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Item nao encontrado")
+        return dict(row)
+
+    def _update_item_status(
+        self,
+        *,
+        tenant_id: str,
+        item_id: str,
+        status: str,
+        membership_id: str,
+        approved_stage: str | None,
+        rejection_reason: str | None,
+        clear_stage2_approval: bool = False,
+    ) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_news_items
+                SET status = :status,
+                    approved_stage1_by_membership_id = CASE
+                        WHEN :approved_stage = 'stage1' THEN :membership_id
+                        ELSE approved_stage1_by_membership_id
+                    END,
+                    approved_stage1_at = CASE
+                        WHEN :approved_stage = 'stage1' THEN COALESCE(approved_stage1_at, NOW())
+                        ELSE approved_stage1_at
+                    END,
+                    approved_stage2_by_membership_id = CASE
+                        WHEN :approved_stage = 'stage2' THEN :membership_id
+                        WHEN :clear_stage2_approval THEN NULL
+                        ELSE approved_stage2_by_membership_id
+                    END,
+                    approved_stage2_at = CASE
+                        WHEN :approved_stage = 'stage2' THEN COALESCE(approved_stage2_at, NOW())
+                        WHEN :clear_stage2_approval THEN NULL
+                        ELSE approved_stage2_at
+                    END,
+                    rejection_reason = :rejection_reason,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :item_id
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "item_id": item_id,
+                "status": status,
+                "membership_id": membership_id,
+                "approved_stage": approved_stage,
+                "clear_stage2_approval": clear_stage2_approval,
+                "rejection_reason": (rejection_reason or "")[:2000] or None,
+            },
+        ).mappings().one()
+        return dict(row)
+
+    def _sync_run_approval_counts(self, *, tenant_id: str, run_id: str) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE social_news_runs
+                SET approved_stage1_count = (
+                        SELECT COUNT(*)
+                        FROM social_news_items
+                        WHERE tenant_id = :tenant_id
+                          AND run_id = :run_id
+                          AND status IN ('approved_stage1', 'rewritten', 'approved_stage2', 'sent')
+                    ),
+                    approved_stage2_count = (
+                        SELECT COUNT(*)
+                        FROM social_news_items
+                        WHERE tenant_id = :tenant_id
+                          AND run_id = :run_id
+                          AND status IN ('approved_stage2', 'sent')
+                    ),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :run_id
+                """
+            ),
+            {"tenant_id": tenant_id, "run_id": run_id},
+        )
+
+    def _mark_run_rewriting(self, *, tenant_id: str, run_id: str) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE social_news_runs
+                SET status = CASE
+                        WHEN status IN ('curation_stage1', 'queued', 'capturing')
+                        THEN 'rewriting'
+                        ELSE status
+                    END,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :run_id
+                """
+            ),
+            {"tenant_id": tenant_id, "run_id": run_id},
+        )
+        self.db.commit()
+
+    def _enqueue_rewrite_job(
+        self,
+        *,
+        tenant_id: str,
+        membership_id: str,
+        item: Mapping[str, Any],
+        idempotency_key: str,
+    ) -> JobRecord:
+        return self.job_queue.enqueue_job(
+            tenant_id=tenant_id,
+            membership_id=membership_id,
+            job_type=SOCIAL_NEWS_REWRITE_JOB,
+            queue_name=SOCIAL_AI_QUEUE,
+            idempotency_key=f"{SOCIAL_NEWS_REWRITE_JOB}:{idempotency_key}",
+            payload={
+                "item_id": str(item["id"]),
+                "run_id": str(item["run_id"]),
+                "segment_id": str(item["segment_id"]),
+            },
+            priority=5,
+            max_attempts=3,
+        )
 
     def _record_consent_event(
         self,
