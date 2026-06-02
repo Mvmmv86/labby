@@ -424,6 +424,7 @@ class JobQueueService:
         headers: Mapping[str, Any] | None = None,
         external_event_id: str | None = None,
         signature_valid: bool = False,
+        commit: bool = True,
     ) -> str:
         event_id = self.db.execute(
             text(
@@ -464,7 +465,8 @@ class JobQueueService:
                 "payload": json.dumps(dict(payload)),
             },
         ).scalar_one()
-        self.db.commit()
+        if commit:
+            self.db.commit()
         return str(event_id)
 
     def record_rate_limit_event(

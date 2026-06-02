@@ -4,6 +4,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
+ChannelType = Literal[
+    "whatsapp_evolution",
+    "whatsapp_cloud",
+    "telegram",
+    "discord",
+    "web_chatbot",
+]
+ChannelStatus = Literal["desconectado", "conectando", "conectado", "erro"]
+
 
 class SalesContactCreateRequest(BaseModel):
     nome: str = Field(min_length=1, max_length=180)
@@ -208,3 +217,113 @@ class SalesNotificationSummary(BaseModel):
     transferencias_pendentes: int
     total_nao_lidas: int
     conversas_aguardando: list[SalesNotificationAwaitingConversation]
+
+
+class SalesChannelCreateRequest(BaseModel):
+    tipo: ChannelType
+    nome: str = Field(min_length=1, max_length=120)
+    config: dict[str, Any] | None = None
+
+
+class SalesChannelUpdateRequest(BaseModel):
+    nome: str | None = Field(default=None, min_length=1, max_length=120)
+    config: dict[str, Any] | None = None
+
+
+class SalesChannelConnectRequest(BaseModel):
+    bot_token: str | None = None
+    phone_number_id: str | None = None
+    access_token: str | None = None
+    waba_id: str | None = None
+    guild_id: str | None = None
+    greeting: str | None = Field(default=None, max_length=500)
+    position: str | None = Field(default=None, max_length=40)
+    widget_color: str | None = Field(default=None, max_length=40)
+
+
+class SalesChannelResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    tipo: ChannelType
+    nome: str
+    status: ChannelStatus
+    config: dict[str, Any]
+    webhook_configured: bool
+    ultimo_evento_at: datetime | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class SalesChannelsResponse(BaseModel):
+    channels: list[SalesChannelResponse]
+
+
+class SalesChannelStatusResponse(BaseModel):
+    id: UUID
+    tipo: ChannelType
+    nome: str
+    status: ChannelStatus
+    numero: str | None = None
+    phone_number: str | None = None
+    bot_username: str | None = None
+    guild_name: str | None = None
+    widget_id: str | None = None
+    config: dict[str, Any] | None = None
+    ultimo_evento_at: datetime | None = None
+
+
+class SalesChannelDeleteResponse(BaseModel):
+    id: UUID
+    message: str
+
+
+class SalesChannelConnectionResponse(BaseModel):
+    status: ChannelStatus
+    message: str | None = None
+    qr_code: str | None = None
+    instance_name: str | None = None
+    phone_number: str | None = None
+    numero: str | None = None
+    bot_username: str | None = None
+    bot_name: str | None = None
+    oauth_url: str | None = None
+    widget_id: str | None = None
+    snippet: str | None = None
+
+
+class SalesWebhookReceiveResponse(BaseModel):
+    status: str
+    webhook_event_id: UUID | None = None
+    job_id: UUID | None = None
+    duplicate: bool = False
+
+
+class SalesDashboardStats(BaseModel):
+    mensagens_hoje: int
+    mensagens_semana: int
+    contatos_total: int
+    conversas_abertas: int
+    campanhas_ativas: int
+    taxa_resposta: float
+
+
+class SalesMessageVolumeItem(BaseModel):
+    date: str
+    enviadas: int
+    recebidas: int
+
+
+class SalesMessageVolumeResponse(BaseModel):
+    period: Literal["7d", "30d", "90d"]
+    data: list[SalesMessageVolumeItem]
+
+
+class SalesRecentActivityItem(BaseModel):
+    tipo: Literal["conversa", "campanha"]
+    titulo: str
+    descricao: str | None = None
+    canal: str | None = None
+    timestamp: datetime | None = None
+    link_id: UUID
+    status: str
+    aguardando_humano: bool

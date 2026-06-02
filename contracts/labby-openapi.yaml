@@ -382,6 +382,619 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/analytics/dashboard:
+    get:
+      tags:
+      - sales-analytics
+      summary: Dashboard
+      operationId: dashboard_api_v2_labby_analytics_dashboard_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesDashboardStats'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/sales/analytics/dashboard:
+    get:
+      tags:
+      - sales-analytics
+      summary: Dashboard
+      operationId: dashboard_api_v2_labby_sales_analytics_dashboard_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesDashboardStats'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/analytics/messages:
+    get:
+      tags:
+      - sales-analytics
+      summary: Message Volume
+      operationId: message_volume_api_v2_labby_analytics_messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(7d|30d|90d)$
+          default: 7d
+          title: Period
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessageVolumeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/analytics/messages:
+    get:
+      tags:
+      - sales-analytics
+      summary: Message Volume
+      operationId: message_volume_api_v2_labby_sales_analytics_messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: period
+        in: query
+        required: false
+        schema:
+          type: string
+          pattern: ^(7d|30d|90d)$
+          default: 7d
+          title: Period
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessageVolumeResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/analytics/activity:
+    get:
+      tags:
+      - sales-analytics
+      summary: Recent Activity
+      operationId: recent_activity_api_v2_labby_analytics_activity_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 30
+          minimum: 1
+          default: 10
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalesRecentActivityItem'
+                title: Response Recent Activity Api V2 Labby Analytics Activity Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/analytics/activity:
+    get:
+      tags:
+      - sales-analytics
+      summary: Recent Activity
+      operationId: recent_activity_api_v2_labby_sales_analytics_activity_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 30
+          minimum: 1
+          default: 10
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SalesRecentActivityItem'
+                title: Response Recent Activity Api V2 Labby Sales Analytics Activity
+                  Get
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/channels/:
+    get:
+      tags:
+      - sales-channels
+      summary: List Channels
+      operationId: list_channels_api_v2_labby_channels__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelsResponse'
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - sales-channels
+      summary: Create Channel
+      operationId: create_channel_api_v2_labby_channels__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesChannelCreateRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/sales/channels/:
+    get:
+      tags:
+      - sales-channels
+      summary: List Channels
+      operationId: list_channels_api_v2_labby_sales_channels__get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelsResponse'
+      security:
+      - HTTPBearer: []
+    post:
+      tags:
+      - sales-channels
+      summary: Create Channel
+      operationId: create_channel_api_v2_labby_sales_channels__post
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesChannelCreateRequest'
+        required: true
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/channels/{channel_id}:
+    get:
+      tags:
+      - sales-channels
+      summary: Get Channel
+      operationId: get_channel_api_v2_labby_channels__channel_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-channels
+      summary: Update Channel
+      operationId: update_channel_api_v2_labby_channels__channel_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesChannelUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-channels
+      summary: Delete Channel
+      operationId: delete_channel_api_v2_labby_channels__channel_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/channels/{channel_id}:
+    get:
+      tags:
+      - sales-channels
+      summary: Get Channel
+      operationId: get_channel_api_v2_labby_sales_channels__channel_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-channels
+      summary: Update Channel
+      operationId: update_channel_api_v2_labby_sales_channels__channel_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesChannelUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-channels
+      summary: Delete Channel
+      operationId: delete_channel_api_v2_labby_sales_channels__channel_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/channels/{channel_id}/status:
+    get:
+      tags:
+      - sales-channels
+      summary: Channel Status
+      operationId: channel_status_api_v2_labby_channels__channel_id__status_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/channels/{channel_id}/status:
+    get:
+      tags:
+      - sales-channels
+      summary: Channel Status
+      operationId: channel_status_api_v2_labby_sales_channels__channel_id__status_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelStatusResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/channels/{channel_id}/connect:
+    post:
+      tags:
+      - sales-channels
+      summary: Connect Channel
+      operationId: connect_channel_api_v2_labby_channels__channel_id__connect_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SalesChannelConnectRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelConnectionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/channels/{channel_id}/connect:
+    post:
+      tags:
+      - sales-channels
+      summary: Connect Channel
+      operationId: connect_channel_api_v2_labby_sales_channels__channel_id__connect_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SalesChannelConnectRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelConnectionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/channels/{channel_id}/disconnect:
+    post:
+      tags:
+      - sales-channels
+      summary: Disconnect Channel
+      operationId: disconnect_channel_api_v2_labby_channels__channel_id__disconnect_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelConnectionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/channels/{channel_id}/disconnect:
+    post:
+      tags:
+      - sales-channels
+      summary: Disconnect Channel
+      operationId: disconnect_channel_api_v2_labby_sales_channels__channel_id__disconnect_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesChannelConnectionResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/contacts/:
     get:
       tags:
@@ -1368,6 +1981,33 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SalesConversationMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/webhooks/evolution/{channel_id}:
+    post:
+      tags:
+      - sales-webhooks
+      summary: Evolution Webhook
+      operationId: evolution_webhook_api_v2_labby_webhooks_evolution__channel_id__post
+      parameters:
+      - name: channel_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Channel Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesWebhookReceiveResponse'
         '422':
           description: Validation Error
           content:
@@ -3698,6 +4338,321 @@ components:
       - token
       - senha
       title: ResetPasswordRequest
+    SalesChannelConnectRequest:
+      properties:
+        bot_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bot Token
+        phone_number_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone Number Id
+        access_token:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Access Token
+        waba_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Waba Id
+        guild_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Guild Id
+        greeting:
+          anyOf:
+          - type: string
+            maxLength: 500
+          - type: 'null'
+          title: Greeting
+        position:
+          anyOf:
+          - type: string
+            maxLength: 40
+          - type: 'null'
+          title: Position
+        widget_color:
+          anyOf:
+          - type: string
+            maxLength: 40
+          - type: 'null'
+          title: Widget Color
+      type: object
+      title: SalesChannelConnectRequest
+    SalesChannelConnectionResponse:
+      properties:
+        status:
+          type: string
+          enum:
+          - desconectado
+          - conectando
+          - conectado
+          - erro
+          title: Status
+        message:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Message
+        qr_code:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Qr Code
+        instance_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Instance Name
+        phone_number:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone Number
+        numero:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Numero
+        bot_username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bot Username
+        bot_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bot Name
+        oauth_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Oauth Url
+        widget_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Widget Id
+        snippet:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Snippet
+      type: object
+      required:
+      - status
+      title: SalesChannelConnectionResponse
+    SalesChannelCreateRequest:
+      properties:
+        tipo:
+          type: string
+          enum:
+          - whatsapp_evolution
+          - whatsapp_cloud
+          - telegram
+          - discord
+          - web_chatbot
+          title: Tipo
+        nome:
+          type: string
+          maxLength: 120
+          minLength: 1
+          title: Nome
+        config:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Config
+      type: object
+      required:
+      - tipo
+      - nome
+      title: SalesChannelCreateRequest
+    SalesChannelDeleteResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - message
+      title: SalesChannelDeleteResponse
+    SalesChannelResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tenant_id:
+          type: string
+          format: uuid
+          title: Tenant Id
+        tipo:
+          type: string
+          enum:
+          - whatsapp_evolution
+          - whatsapp_cloud
+          - telegram
+          - discord
+          - web_chatbot
+          title: Tipo
+        nome:
+          type: string
+          title: Nome
+        status:
+          type: string
+          enum:
+          - desconectado
+          - conectando
+          - conectado
+          - erro
+          title: Status
+        config:
+          additionalProperties: true
+          type: object
+          title: Config
+        webhook_configured:
+          type: boolean
+          title: Webhook Configured
+        ultimo_evento_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultimo Evento At
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+        updated_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Updated At
+      type: object
+      required:
+      - id
+      - tenant_id
+      - tipo
+      - nome
+      - status
+      - config
+      - webhook_configured
+      title: SalesChannelResponse
+    SalesChannelStatusResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        tipo:
+          type: string
+          enum:
+          - whatsapp_evolution
+          - whatsapp_cloud
+          - telegram
+          - discord
+          - web_chatbot
+          title: Tipo
+        nome:
+          type: string
+          title: Nome
+        status:
+          type: string
+          enum:
+          - desconectado
+          - conectando
+          - conectado
+          - erro
+          title: Status
+        numero:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Numero
+        phone_number:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Phone Number
+        bot_username:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bot Username
+        guild_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Guild Name
+        widget_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Widget Id
+        config:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Config
+        ultimo_evento_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultimo Evento At
+      type: object
+      required:
+      - id
+      - tipo
+      - nome
+      - status
+      title: SalesChannelStatusResponse
+    SalesChannelUpdateRequest:
+      properties:
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 120
+            minLength: 1
+          - type: 'null'
+          title: Nome
+        config:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Config
+      type: object
+      title: SalesChannelUpdateRequest
+    SalesChannelsResponse:
+      properties:
+        channels:
+          items:
+            $ref: '#/components/schemas/SalesChannelResponse'
+          type: array
+          title: Channels
+      type: object
+      required:
+      - channels
+      title: SalesChannelsResponse
     SalesContactBatchRequest:
       properties:
         contacts:
@@ -4431,6 +5386,35 @@ components:
       - per_page
       - pages
       title: SalesConversationsResponse
+    SalesDashboardStats:
+      properties:
+        mensagens_hoje:
+          type: integer
+          title: Mensagens Hoje
+        mensagens_semana:
+          type: integer
+          title: Mensagens Semana
+        contatos_total:
+          type: integer
+          title: Contatos Total
+        conversas_abertas:
+          type: integer
+          title: Conversas Abertas
+        campanhas_ativas:
+          type: integer
+          title: Campanhas Ativas
+        taxa_resposta:
+          type: number
+          title: Taxa Resposta
+      type: object
+      required:
+      - mensagens_hoje
+      - mensagens_semana
+      - contatos_total
+      - conversas_abertas
+      - campanhas_ativas
+      - taxa_resposta
+      title: SalesDashboardStats
     SalesMessageCreateRequest:
       properties:
         conteudo:
@@ -4512,6 +5496,42 @@ components:
       - status
       - created_at
       title: SalesMessageResponse
+    SalesMessageVolumeItem:
+      properties:
+        date:
+          type: string
+          title: Date
+        enviadas:
+          type: integer
+          title: Enviadas
+        recebidas:
+          type: integer
+          title: Recebidas
+      type: object
+      required:
+      - date
+      - enviadas
+      - recebidas
+      title: SalesMessageVolumeItem
+    SalesMessageVolumeResponse:
+      properties:
+        period:
+          type: string
+          enum:
+          - 7d
+          - 30d
+          - 90d
+          title: Period
+        data:
+          items:
+            $ref: '#/components/schemas/SalesMessageVolumeItem'
+          type: array
+          title: Data
+      type: object
+      required:
+      - period
+      - data
+      title: SalesMessageVolumeResponse
     SalesMessagesResponse:
       properties:
         messages:
@@ -4586,6 +5606,76 @@ components:
       - total_nao_lidas
       - conversas_aguardando
       title: SalesNotificationSummary
+    SalesRecentActivityItem:
+      properties:
+        tipo:
+          type: string
+          enum:
+          - conversa
+          - campanha
+          title: Tipo
+        titulo:
+          type: string
+          title: Titulo
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
+        canal:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Canal
+        timestamp:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Timestamp
+        link_id:
+          type: string
+          format: uuid
+          title: Link Id
+        status:
+          type: string
+          title: Status
+        aguardando_humano:
+          type: boolean
+          title: Aguardando Humano
+      type: object
+      required:
+      - tipo
+      - titulo
+      - link_id
+      - status
+      - aguardando_humano
+      title: SalesRecentActivityItem
+    SalesWebhookReceiveResponse:
+      properties:
+        status:
+          type: string
+          title: Status
+        webhook_event_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Webhook Event Id
+        job_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Job Id
+        duplicate:
+          type: boolean
+          title: Duplicate
+          default: false
+      type: object
+      required:
+      - status
+      title: SalesWebhookReceiveResponse
     SocialNewsCurationRequest:
       properties:
         idempotency_key:

@@ -29,9 +29,13 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 30
     app_base_url: str = "https://app.labby.com.br"
+    public_api_base_url: str = "https://api.labby.com.br"
     email_from: str = "Labby <convites@labby.com.br>"
     resend_api_key: str | None = None
     resend_timeout_seconds: float = 10.0
+    evolution_api_url: str | None = None
+    evolution_api_key: str | None = None
+    evolution_api_timeout_seconds: float = 30.0
     x_api_provider: str = "twitterapi_io"
     x_api_key: str | None = None
     x_api_base_url: str | None = None

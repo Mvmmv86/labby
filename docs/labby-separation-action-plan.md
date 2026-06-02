@@ -403,7 +403,8 @@ Entregue localmente em 2026-06-01:
 
 ### A3 - Sales transplantado
 
-Status: primeira fatia tecnica iniciada localmente.
+Status: fatias Contacts, Inbox, Channels/Webhook Evolution e Analytics iniciadas
+localmente.
 
 Objetivo: portar o minimo de Sales necessario para a Labby operar sem OmniiaPro.
 
@@ -477,6 +478,56 @@ Entregue localmente em 2026-06-02:
   cursor/mark-read/send/close, dedupe de mensagem externa e cross-tenant real
   com Postgres no CI.
 - Documento `docs/a3-sales-inbox-handoff.md`.
+
+Entregue localmente em 2026-06-02, fatia Channels/Webhook Evolution/Analytics:
+
+- CRUD de canais em `/api/v2/labby/channels/*` e
+  `/api/v2/labby/sales/channels/*`.
+- Canais suportados no contrato:
+  - `whatsapp_evolution`
+  - `whatsapp_cloud`
+  - `telegram`
+  - `discord`
+  - `web_chatbot`
+- Respostas de channels redigem campos sensiveis de `config` e nao expoem
+  `webhook_secret`.
+- Mutations de channels exigem modulo `sales` e role `owner/admin`.
+- Integracao standalone de canais em `app/integrations/sales_channels.py`,
+  usando `LABBY_*`.
+- Settings:
+  - `LABBY_PUBLIC_API_BASE_URL`
+  - `LABBY_EVOLUTION_API_URL`
+  - `LABBY_EVOLUTION_API_KEY`
+  - `LABBY_EVOLUTION_API_TIMEOUT_SECONDS`
+- Webhook publico `POST /api/v2/labby/webhooks/evolution/{channel_id}`.
+- Webhook Evolution valida segredo por comparacao constante.
+- Evento bruto e job `sales.webhook.evolution` gravados na mesma transacao via
+  `webhook_events` e `jobs`.
+- Handler do job Evolution cria/atualiza contato, vinculo de canal, conversa e
+  mensagem.
+- Dedupe de webhook/mensagem por idempotencia do evento e por
+  `tenant_id + provider + external_id`.
+- Analytics do dashboard em `/api/v2/labby/analytics/*` e
+  `/api/v2/labby/sales/analytics/*`:
+  - dashboard
+  - messages
+  - activity
+- `campanhas_ativas` retorna `0` ate a migration de campanhas entrar.
+- Testes de contrato flat/canonico para channels e analytics.
+- Teste de webhook publico Evolution.
+- Teste de integracao Postgres para webhook Evolution duplicado sem duplicar
+  mensagem.
+- Documento `docs/a3-sales-channels-webhooks-analytics-handoff.md`.
+
+Ainda falta em A3:
+
+- Webhooks Telegram, WhatsApp Cloud e Discord.
+- Outbound dispatch real de mensagens `pending`.
+- Campaigns com recipients e jobs de disparo.
+- Bots com prompts, regras e execucao.
+- Widget publico completo.
+- Rate limit por canal/provider.
+- Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone
 
