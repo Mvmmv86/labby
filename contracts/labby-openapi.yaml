@@ -796,6 +796,584 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/conversations/:
+    get:
+      tags:
+      - sales-conversations
+      summary: List Conversations
+      operationId: list_conversations_api_v2_labby_conversations__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_tipo
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Channel Tipo
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: atendente_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/conversations/:
+    get:
+      tags:
+      - sales-conversations
+      summary: List Conversations
+      operationId: list_conversations_api_v2_labby_sales_conversations__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: channel_tipo
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Channel Tipo
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: search
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Search
+      - name: atendente_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/conversations/notifications/summary:
+    get:
+      tags:
+      - sales-conversations
+      summary: Notification Summary
+      operationId: notification_summary_api_v2_labby_conversations_notifications_summary_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesNotificationSummary'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/sales/conversations/notifications/summary:
+    get:
+      tags:
+      - sales-conversations
+      summary: Notification Summary
+      operationId: notification_summary_api_v2_labby_sales_conversations_notifications_summary_get
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesNotificationSummary'
+      security:
+      - HTTPBearer: []
+  /api/v2/labby/conversations/{conversation_id}:
+    get:
+      tags:
+      - sales-conversations
+      summary: Get Conversation
+      operationId: get_conversation_api_v2_labby_conversations__conversation_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-conversations
+      summary: Update Conversation
+      operationId: update_conversation_api_v2_labby_conversations__conversation_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesConversationUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/conversations/{conversation_id}:
+    get:
+      tags:
+      - sales-conversations
+      summary: Get Conversation
+      operationId: get_conversation_api_v2_labby_sales_conversations__conversation_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-conversations
+      summary: Update Conversation
+      operationId: update_conversation_api_v2_labby_sales_conversations__conversation_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesConversationUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/conversations/{conversation_id}/messages:
+    get:
+      tags:
+      - sales-conversations
+      summary: List Messages
+      operationId: list_messages_api_v2_labby_conversations__conversation_id__messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Cursor
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 30
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessagesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-conversations
+      summary: Send Message
+      operationId: send_message_api_v2_labby_conversations__conversation_id__messages_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesMessageCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/conversations/{conversation_id}/messages:
+    get:
+      tags:
+      - sales-conversations
+      summary: List Messages
+      operationId: list_messages_api_v2_labby_sales_conversations__conversation_id__messages_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      - name: cursor
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Cursor
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 30
+          title: Limit
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessagesResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-conversations
+      summary: Send Message
+      operationId: send_message_api_v2_labby_sales_conversations__conversation_id__messages_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesMessageCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesMessageResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/conversations/{conversation_id}/mark-read:
+    post:
+      tags:
+      - sales-conversations
+      summary: Mark Conversation Read
+      operationId: mark_conversation_read_api_v2_labby_conversations__conversation_id__mark_read_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMarkReadResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/conversations/{conversation_id}/mark-read:
+    post:
+      tags:
+      - sales-conversations
+      summary: Mark Conversation Read
+      operationId: mark_conversation_read_api_v2_labby_sales_conversations__conversation_id__mark_read_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMarkReadResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/conversations/{conversation_id}/close:
+    post:
+      tags:
+      - sales-conversations
+      summary: Close Conversation
+      operationId: close_conversation_api_v2_labby_conversations__conversation_id__close_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/conversations/{conversation_id}/close:
+    post:
+      tags:
+      - sales-conversations
+      summary: Close Conversation
+      operationId: close_conversation_api_v2_labby_sales_conversations__conversation_id__close_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: conversation_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Conversation Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesConversationMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/social/news/segments:
     get:
       tags:
@@ -3539,6 +4117,475 @@ components:
       - per_page
       - pages
       title: SalesContactsResponse
+    SalesConversationContactInfo:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        grupo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+        notas:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Notas
+        ultima_interacao:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Interacao
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+      type: object
+      required:
+      - id
+      - nome
+      - tags
+      title: SalesConversationContactInfo
+    SalesConversationDetail:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        contato:
+          $ref: '#/components/schemas/SalesConversationContactInfo'
+        channel:
+          additionalProperties: true
+          type: object
+          title: Channel
+        status:
+          type: string
+          title: Status
+        assunto:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assunto
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        atendente_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+        atendente_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Atendente Nome
+        bot_ativo:
+          type: boolean
+          title: Bot Ativo
+        ultima_mensagem_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Mensagem At
+        fechado_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Fechado At
+        created_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Created At
+      type: object
+      required:
+      - id
+      - contato
+      - channel
+      - status
+      - tags
+      - bot_ativo
+      title: SalesConversationDetail
+    SalesConversationListItem:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        contato_id:
+          type: string
+          format: uuid
+          title: Contato Id
+        contato_nome:
+          type: string
+          title: Contato Nome
+        contato_telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Contato Telefone
+        channel_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Channel Id
+        channel_tipo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Channel Tipo
+        channel_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Channel Nome
+        status:
+          type: string
+          title: Status
+        assunto:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assunto
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        atendente_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+        atendente_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Atendente Nome
+        bot_ativo:
+          type: boolean
+          title: Bot Ativo
+        aguardando_humano:
+          type: boolean
+          title: Aguardando Humano
+        ultima_mensagem:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ultima Mensagem
+        ultima_mensagem_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Mensagem At
+        mensagens_nao_lidas:
+          type: integer
+          title: Mensagens Nao Lidas
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - contato_id
+      - contato_nome
+      - status
+      - tags
+      - bot_ativo
+      - aguardando_humano
+      - mensagens_nao_lidas
+      - created_at
+      title: SalesConversationListItem
+    SalesConversationMarkReadResponse:
+      properties:
+        marked:
+          type: integer
+          title: Marked
+      type: object
+      required:
+      - marked
+      title: SalesConversationMarkReadResponse
+    SalesConversationMutationResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        status:
+          type: string
+          title: Status
+        atendente_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+        assunto:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Assunto
+        tags:
+          items:
+            type: string
+          type: array
+          title: Tags
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - status
+      - message
+      title: SalesConversationMutationResponse
+    SalesConversationUpdateRequest:
+      properties:
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - aberta
+            - fechada
+            - pendente
+          - type: 'null'
+          title: Status
+        atendente_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Atendente Id
+        tags:
+          anyOf:
+          - items:
+              type: string
+            type: array
+          - type: 'null'
+          title: Tags
+        assunto:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Assunto
+      type: object
+      title: SalesConversationUpdateRequest
+    SalesConversationsResponse:
+      properties:
+        conversations:
+          items:
+            $ref: '#/components/schemas/SalesConversationListItem'
+          type: array
+          title: Conversations
+        total:
+          type: integer
+          title: Total
+        page:
+          type: integer
+          title: Page
+        per_page:
+          type: integer
+          title: Per Page
+        pages:
+          type: integer
+          title: Pages
+      type: object
+      required:
+      - conversations
+      - total
+      - page
+      - per_page
+      - pages
+      title: SalesConversationsResponse
+    SalesMessageCreateRequest:
+      properties:
+        conteudo:
+          type: string
+          minLength: 1
+          title: Conteudo
+        tipo:
+          type: string
+          enum:
+          - text
+          - image
+          - video
+          - document
+          title: Tipo
+          default: text
+      type: object
+      required:
+      - conteudo
+      title: SalesMessageCreateRequest
+    SalesMessageResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        conversa_id:
+          type: string
+          format: uuid
+          title: Conversa Id
+        contato_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Contato Id
+        direcao:
+          type: string
+          title: Direcao
+        remetente_tipo:
+          type: string
+          title: Remetente Tipo
+        remetente_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Remetente Id
+        tipo:
+          type: string
+          title: Tipo
+        conteudo:
+          type: string
+          title: Conteudo
+        media_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Media Url
+        media_caption:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Media Caption
+        status:
+          type: string
+          title: Status
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - conversa_id
+      - direcao
+      - remetente_tipo
+      - tipo
+      - conteudo
+      - status
+      - created_at
+      title: SalesMessageResponse
+    SalesMessagesResponse:
+      properties:
+        messages:
+          items:
+            $ref: '#/components/schemas/SalesMessageResponse'
+          type: array
+          title: Messages
+        has_more:
+          type: boolean
+          title: Has More
+        next_cursor:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Next Cursor
+      type: object
+      required:
+      - messages
+      - has_more
+      title: SalesMessagesResponse
+    SalesNotificationAwaitingConversation:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        contato_nome:
+          type: string
+          title: Contato Nome
+        channel_tipo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Channel Tipo
+        ultima_mensagem:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Ultima Mensagem
+        ultima_mensagem_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Ultima Mensagem At
+        mensagens_nao_lidas:
+          type: integer
+          title: Mensagens Nao Lidas
+      type: object
+      required:
+      - id
+      - contato_nome
+      - mensagens_nao_lidas
+      title: SalesNotificationAwaitingConversation
+    SalesNotificationSummary:
+      properties:
+        transferencias_pendentes:
+          type: integer
+          title: Transferencias Pendentes
+        total_nao_lidas:
+          type: integer
+          title: Total Nao Lidas
+        conversas_aguardando:
+          items:
+            $ref: '#/components/schemas/SalesNotificationAwaitingConversation'
+          type: array
+          title: Conversas Aguardando
+      type: object
+      required:
+      - transferencias_pendentes
+      - total_nao_lidas
+      - conversas_aguardando
+      title: SalesNotificationSummary
     SocialNewsCurationRequest:
       properties:
         idempotency_key:

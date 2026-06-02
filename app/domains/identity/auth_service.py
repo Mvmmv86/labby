@@ -1,5 +1,6 @@
 import secrets
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -45,6 +46,8 @@ class AuthContext:
     tenant_ativo: bool
     modules: tuple[str, ...]
     default_module: str
+    connected_channels_count: int = 0
+    channels: tuple[dict[str, Any], ...] = ()
 
 
 class AuthService:
@@ -293,6 +296,8 @@ class AuthService:
             slug=context.tenant_slug,
             plano=context.tenant_plano,
             ativo=context.tenant_ativo,
+            canais_conectados=context.connected_channels_count,
+            canais=list(context.channels),
             modules=modules_payload(context.modules),
             default_module=context.default_module,
         )
@@ -343,6 +348,28 @@ class AuthService:
                   t.slug AS tenant_slug,
                   t.plano AS tenant_plano,
                   t.ativo AS tenant_ativo,
+                  (
+                    SELECT COUNT(*)
+                    FROM sales_channels sc
+                    WHERE sc.tenant_id = t.id
+                      AND sc.status = 'conectado'
+                  ) AS connected_channels_count,
+                  COALESCE(
+                    (
+                      SELECT jsonb_agg(
+                        jsonb_build_object(
+                          'id', sc.id,
+                          'tipo', sc.channel_type,
+                          'nome', sc.name,
+                          'status', sc.status
+                        )
+                        ORDER BY sc.created_at ASC
+                      )
+                      FROM sales_channels sc
+                      WHERE sc.tenant_id = t.id
+                    ),
+                    '[]'::jsonb
+                  ) AS channels,
                   COALESCE(
                     array_agg(mm.module_key) FILTER (WHERE mm.module_key IS NOT NULL),
                     '{}'
@@ -364,6 +391,7 @@ class AuthService:
             raise HTTPException(status_code=403, detail="Membership nao encontrada ou inativa")
 
         modules = tuple(row["modules"] or ())
+        channels = tuple(dict(channel) for channel in (row["channels"] or ()))
         return AuthContext(
             user_id=str(row["user_id"]),
             tenant_id=str(row["tenant_id"]),
@@ -377,6 +405,8 @@ class AuthService:
             tenant_ativo=row["tenant_ativo"],
             modules=modules,
             default_module=row["default_module"],
+            connected_channels_count=int(row["connected_channels_count"] or 0),
+            channels=channels,
         )
 
     def _memberships_for_user(self, user_id: str) -> list[MembershipResponse]:

@@ -449,6 +449,35 @@ Entregue localmente em 2026-06-01:
   cross-tenant negativo no service e integracao real com Postgres no CI.
 - Documento `docs/a3-sales-contacts-handoff.md`.
 
+Entregue localmente em 2026-06-02:
+
+- Migration `007_sales_inbox_foundation`.
+- Tabelas `sales_channels`, `sales_contact_channels`, `sales_conversations` e
+  `sales_messages`.
+- Endpoints flat `/api/v2/labby/conversations/*` compativeis com o frontend
+  atual.
+- Endpoints canonicos `/api/v2/labby/sales/conversations/*`.
+- Listagem de Inbox com filtros `channel_tipo`, `status`, `search`,
+  `atendente_id`, paginacao e agregacao em lote de ultima mensagem e nao-lidas.
+- Resumo de notificacoes `conversations/notifications/summary`.
+- Detalhe de conversa, listagem cursor-based de mensagens, `mark-read`,
+  `close` e envio interno de mensagem de saida com status `pending`.
+- Contacts agora retorna `total_conversas`, `canais_vinculados`,
+  `canais` e `conversas_recentes` usando agregacoes em lote, sem voltar aos
+  subqueries por linha do OmniiaFlow antigo.
+- `auth/me` e auth responses retornam `canais_conectados` e `canais` a partir
+  de `sales_channels`, para o frontend habilitar o Inbox quando houver canal.
+- `require_module("sales")` no router de conversas.
+- Actor humano por `membership_id` em `assigned_to_membership_id`,
+  `sender_membership_id`, `created_by_membership_id` e
+  `updated_by_membership_id`.
+- Unique parcial por `tenant_id + provider + external_id` em mensagens para
+  dedupe de webhooks/providers.
+- Testes de contrato flat/canonico, modulo `sales`, agregacoes de Inbox,
+  cursor/mark-read/send/close, dedupe de mensagem externa e cross-tenant real
+  com Postgres no CI.
+- Documento `docs/a3-sales-inbox-handoff.md`.
+
 ### A4 - Integracoes reais standalone
 
 Objetivo: remover dependencias indiretas do OmniiaPro nos servicos externos.

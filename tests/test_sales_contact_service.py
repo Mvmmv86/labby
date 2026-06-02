@@ -113,6 +113,8 @@ def test_list_contacts_filters_by_tenant_and_paginates() -> None:
         [
             FakeResult(scalar=1),
             FakeResult(rows=[make_contact_row()]),
+            FakeResult(rows=[]),
+            FakeResult(rows=[]),
         ]
     )
     service = SalesContactService(db)

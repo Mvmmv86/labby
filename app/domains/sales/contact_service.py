@@ -4,7 +4,7 @@ from math import ceil
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -92,9 +92,21 @@ class SalesContactService:
             .mappings()
             .all()
         )
+        contact_ids = [row["id"] for row in rows]
+        totals_by_contact, channels_by_contact = self._contact_conversation_summaries(
+            tenant_id=str(current.tenant_id),
+            contact_ids=contact_ids,
+        )
 
         return {
-            "contacts": [self._contact_list_row(row) for row in rows],
+            "contacts": [
+                self._contact_list_row(
+                    row,
+                    total_conversations=totals_by_contact.get(str(row["id"]), 0),
+                    linked_channels=channels_by_contact.get(str(row["id"]), []),
+                )
+                for row in rows
+            ],
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -119,7 +131,25 @@ class SalesContactService:
         )
         if row is None:
             raise HTTPException(status_code=404, detail="Contato nao encontrado")
-        return self._contact_detail_row(row)
+        totals_by_contact, channels_by_contact = self._contact_conversation_summaries(
+            tenant_id=str(current.tenant_id),
+            contact_ids=[str(row["id"])],
+        )
+        contact_id = str(row["id"])
+        contact_uuid = row["id"]
+        return self._contact_detail_row(
+            row,
+            total_conversations=totals_by_contact.get(contact_id, 0),
+            linked_channels=channels_by_contact.get(contact_id, []),
+            channels=self._contact_channels(
+                tenant_id=str(current.tenant_id),
+                contact_id=contact_uuid,
+            ),
+            recent_conversations=self._recent_conversations(
+                tenant_id=str(current.tenant_id),
+                contact_id=contact_uuid,
+            ),
+        )
 
     def create_contact(
         self,
@@ -482,8 +512,191 @@ class SalesContactService:
             raise HTTPException(status_code=409, detail="Ja existe um contato com esse telefone")
         raise HTTPException(status_code=409, detail="Conflito ao salvar contato")
 
+    def _contact_conversation_summaries(
+        self,
+        *,
+        tenant_id: str,
+        contact_ids: list[Any],
+    ) -> tuple[dict[str, int], dict[str, list[str]]]:
+        if not contact_ids:
+            return {}, {}
+
+        conversation_rows = (
+            self.db.execute(
+                text(
+                    """
+                    SELECT
+                        c.contact_id,
+                        COUNT(*) AS total_conversations,
+                        COALESCE(
+                            array_agg(DISTINCT ch.channel_type)
+                                FILTER (WHERE ch.channel_type IS NOT NULL),
+                            '{}'
+                        ) AS conversation_channels
+                    FROM sales_conversations c
+                    LEFT JOIN sales_channels ch
+                      ON ch.id = c.channel_id
+                     AND ch.tenant_id = c.tenant_id
+                    WHERE c.tenant_id = :tenant_id
+                      AND c.contact_id IN :contact_ids
+                    GROUP BY c.contact_id
+                    """
+                ).bindparams(bindparam("contact_ids", expanding=True)),
+                {"tenant_id": tenant_id, "contact_ids": contact_ids},
+            )
+            .mappings()
+            .all()
+        )
+        channel_rows = (
+            self.db.execute(
+                text(
+                    """
+                    SELECT
+                        contact_id,
+                        COALESCE(array_agg(DISTINCT channel_type), '{}') AS contact_channels
+                    FROM sales_contact_channels
+                    WHERE tenant_id = :tenant_id
+                      AND contact_id IN :contact_ids
+                    GROUP BY contact_id
+                    """
+                ).bindparams(bindparam("contact_ids", expanding=True)),
+                {"tenant_id": tenant_id, "contact_ids": contact_ids},
+            )
+            .mappings()
+            .all()
+        )
+
+        totals_by_contact = {
+            str(row["contact_id"]): int(row["total_conversations"] or 0)
+            for row in conversation_rows
+        }
+        channels_by_contact: dict[str, list[str]] = {}
+        for row in conversation_rows:
+            contact_id = str(row["contact_id"])
+            channels_by_contact.setdefault(contact_id, [])
+            channels_by_contact[contact_id].extend(row["conversation_channels"] or [])
+        for row in channel_rows:
+            contact_id = str(row["contact_id"])
+            channels_by_contact.setdefault(contact_id, [])
+            channels_by_contact[contact_id].extend(row["contact_channels"] or [])
+
+        for contact_id, channels in channels_by_contact.items():
+            seen: set[str] = set()
+            deduped_channels: list[str] = []
+            for channel in channels:
+                if channel and channel not in seen:
+                    deduped_channels.append(channel)
+                    seen.add(channel)
+            channels_by_contact[contact_id] = deduped_channels
+        return totals_by_contact, channels_by_contact
+
+    def _contact_channels(self, *, tenant_id: str, contact_id: Any) -> list[dict[str, Any]]:
+        rows = (
+            self.db.execute(
+                text(
+                    """
+                    SELECT channel_type, identifier, created_at
+                    FROM sales_contact_channels
+                    WHERE tenant_id = :tenant_id
+                      AND contact_id = :contact_id
+                    ORDER BY created_at DESC, id DESC
+                    """
+                ),
+                {"tenant_id": tenant_id, "contact_id": contact_id},
+            )
+            .mappings()
+            .all()
+        )
+        return [
+            {
+                "tipo_canal": row["channel_type"],
+                "identificador": row["identifier"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    def _recent_conversations(self, *, tenant_id: str, contact_id: Any) -> list[dict[str, Any]]:
+        rows = (
+            self.db.execute(
+                text(
+                    """
+                    WITH recent AS (
+                        SELECT
+                            c.id,
+                            c.status,
+                            c.subject,
+                            c.assigned_to_membership_id,
+                            c.last_message_at,
+                            c.created_at,
+                            ch.channel_type,
+                            ch.name AS channel_name,
+                            u.nome AS assigned_name
+                        FROM sales_conversations c
+                        LEFT JOIN sales_channels ch
+                          ON ch.id = c.channel_id
+                         AND ch.tenant_id = c.tenant_id
+                        LEFT JOIN memberships am
+                          ON am.id = c.assigned_to_membership_id
+                         AND am.tenant_id = c.tenant_id
+                        LEFT JOIN users u ON u.id = am.user_id
+                        WHERE c.tenant_id = :tenant_id
+                          AND c.contact_id = :contact_id
+                        ORDER BY
+                            c.last_message_at DESC NULLS LAST,
+                            c.created_at DESC,
+                            c.id DESC
+                        LIMIT 5
+                    ),
+                    last_messages AS (
+                        SELECT DISTINCT ON (m.conversation_id)
+                            m.conversation_id,
+                            m.content,
+                            m.created_at
+                        FROM sales_messages m
+                        JOIN recent r ON r.id = m.conversation_id
+                        WHERE m.tenant_id = :tenant_id
+                        ORDER BY m.conversation_id, m.created_at DESC, m.id DESC
+                    )
+                    SELECT
+                        r.*,
+                        lm.content AS last_message,
+                        COALESCE(lm.created_at, r.last_message_at) AS effective_last_message_at
+                    FROM recent r
+                    LEFT JOIN last_messages lm ON lm.conversation_id = r.id
+                    ORDER BY
+                        r.last_message_at DESC NULLS LAST,
+                        r.created_at DESC,
+                        r.id DESC
+                    """
+                ),
+                {"tenant_id": tenant_id, "contact_id": contact_id},
+            )
+            .mappings()
+            .all()
+        )
+        return [
+            {
+                "id": row["id"],
+                "channel_tipo": row["channel_type"],
+                "channel_nome": row["channel_name"],
+                "status": row["status"],
+                "assunto": row["subject"],
+                "atendente_nome": row["assigned_name"],
+                "ultima_mensagem": row["last_message"],
+                "ultima_mensagem_at": row["effective_last_message_at"],
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
     @staticmethod
-    def _contact_list_row(row) -> dict[str, Any]:
+    def _contact_list_row(
+        row,
+        *,
+        total_conversations: int = 0,
+        linked_channels: list[str] | None = None,
+    ) -> dict[str, Any]:
         return {
             "id": row["id"],
             "nome": row["name"] or "Sem nome",
@@ -491,15 +704,27 @@ class SalesContactService:
             "email": row["email_normalized"],
             "tags": row["tags"] or [],
             "grupo": row["group_name"],
-            "total_conversas": 0,
-            "canais_vinculados": [],
+            "total_conversas": total_conversations,
+            "canais_vinculados": linked_channels or [],
             "ultima_interacao": row["last_interaction_at"],
             "created_at": row["created_at"],
         }
 
     @classmethod
-    def _contact_detail_row(cls, row) -> dict[str, Any]:
-        data = cls._contact_list_row(row)
+    def _contact_detail_row(
+        cls,
+        row,
+        *,
+        total_conversations: int = 0,
+        linked_channels: list[str] | None = None,
+        channels: list[dict[str, Any]] | None = None,
+        recent_conversations: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        data = cls._contact_list_row(
+            row,
+            total_conversations=total_conversations,
+            linked_channels=linked_channels or [],
+        )
         data.update(
             {
                 "notas": row["notes"],
@@ -509,8 +734,8 @@ class SalesContactService:
                 "optout": row["optout"] or False,
                 "status": row["status"],
                 "updated_at": row["updated_at"],
-                "canais": [],
-                "conversas_recentes": [],
+                "canais": channels or [],
+                "conversas_recentes": recent_conversations or [],
             }
         )
         return data
