@@ -526,11 +526,30 @@ Entregue localmente em 2026-06-02, fatia Channels/Webhook Evolution/Analytics:
 - Teste de connect bloqueado para provider sem inbound.
 - Documento `docs/a3-sales-channels-webhooks-analytics-handoff.md`.
 
+Entregue localmente em 2026-06-02, fatia Campaigns:
+
+- Migration `008_sales_campaigns_foundation`.
+- Tabelas `sales_campaigns` e `sales_campaign_recipients`.
+- Endpoints flat `/api/v2/labby/campaigns/*` e canonicos
+  `/api/v2/labby/sales/campaigns/*`.
+- CRUD de campanhas, recipients por contatos, preview de recipients, start,
+  cancel, listagem de recipients e dispatch.
+- Recipients derivados de contatos ativos e sem `optout`, com dedupe por
+  `tenant_id + campaign_id + contact_id`.
+- `start` ativa a campanha; dispatch HTTP exige campanha ativa e cria job
+  idempotente `sales.campaign.dispatch` na fila `worker-sales-campaigns`.
+- Worker de campaigns cria mensagens de saida com status `pending` e provider
+  `labby_campaign`, sem depender ainda de envio externo real.
+- Reprocessamento do mesmo job nao duplica mensagem, conversa nem contadores.
+- OpenAPI regenerado em `contracts/labby-openapi.yaml`.
+- Testes de contrato flat/canonico, metadata, dispatch idempotente,
+  cross-tenant real e regressao de lifecycle webhook Evolution.
+- Documento `docs/a3-sales-campaigns-handoff.md`.
+
 Ainda falta em A3:
 
 - Webhooks Telegram, WhatsApp Cloud e Discord.
 - Outbound dispatch real de mensagens `pending`.
-- Campaigns com recipients e jobs de disparo.
 - Bots com prompts, regras e execucao.
 - Widget publico completo.
 - Rate limit por canal/provider.

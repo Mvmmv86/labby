@@ -327,3 +327,148 @@ class SalesRecentActivityItem(BaseModel):
     link_id: UUID
     status: str
     aguardando_humano: bool
+
+
+CampaignStatus = Literal[
+    "draft",
+    "ativa",
+    "scheduled",
+    "sending",
+    "queued",
+    "sent",
+    "paused",
+    "cancelled",
+    "failed",
+]
+CampaignRecipientStatus = Literal["pending", "queued", "sent", "failed", "skipped"]
+
+
+class SalesCampaignCreateRequest(BaseModel):
+    nome: str = Field(min_length=1, max_length=180)
+    conteudo: str = Field(min_length=1)
+    descricao: str | None = None
+    channel_id: UUID | None = None
+    tipo_mensagem: Literal["text", "image", "video", "document"] = "text"
+    contact_ids: list[UUID] | None = Field(default=None, max_length=1000)
+    contatos_ids: list[UUID] | None = Field(default=None, max_length=1000)
+    scheduled_at: datetime | None = None
+    agendado_para: datetime | None = None
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class SalesCampaignUpdateRequest(BaseModel):
+    nome: str | None = Field(default=None, min_length=1, max_length=180)
+    conteudo: str | None = Field(default=None, min_length=1)
+    descricao: str | None = None
+    channel_id: UUID | None = None
+    tipo_mensagem: Literal["text", "image", "video", "document"] | None = None
+    status: CampaignStatus | None = None
+    scheduled_at: datetime | None = None
+    agendado_para: datetime | None = None
+
+
+class SalesCampaignRecipientsRequest(BaseModel):
+    contact_ids: list[UUID] = Field(min_length=1, max_length=1000)
+
+
+class SalesCampaignDispatchRequest(BaseModel):
+    idempotency_key: str | None = Field(default=None, max_length=255)
+
+
+class SalesCampaignListItem(BaseModel):
+    id: UUID
+    nome: str
+    status: CampaignStatus
+    channel_id: UUID | None = None
+    channel_tipo: ChannelType | None = None
+    total_destinatarios: int
+    queued_count: int
+    sent_count: int
+    failed_count: int
+    skipped_count: int
+    scheduled_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SalesCampaignDetail(SalesCampaignListItem):
+    descricao: str | None = None
+    conteudo: str
+    tipo_mensagem: Literal["text", "image", "video", "document"]
+    idempotency_key: str
+    started_at: datetime | None = None
+    finished_at: datetime | None = None
+
+
+class SalesCampaignsResponse(BaseModel):
+    campaigns: list[SalesCampaignListItem]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
+class SalesCampaignMutationResponse(BaseModel):
+    id: UUID
+    nome: str
+    status: CampaignStatus
+    total_destinatarios: int
+    message: str
+
+
+class SalesCampaignDeleteResponse(BaseModel):
+    id: UUID
+    message: str
+
+
+class SalesCampaignRecipientResponse(BaseModel):
+    id: UUID
+    campaign_id: UUID
+    contact_id: UUID | None = None
+    contato_nome: str | None = None
+    telefone: str | None = None
+    status: CampaignRecipientStatus
+    message_id: UUID | None = None
+    conversation_id: UUID | None = None
+    error: str | None = None
+    queued_at: datetime | None = None
+    created_at: datetime
+
+
+class SalesCampaignRecipientsResponse(BaseModel):
+    recipients: list[SalesCampaignRecipientResponse]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
+class SalesCampaignAddRecipientsResponse(BaseModel):
+    campaign_id: UUID
+    requested: int
+    inserted: int
+    duplicates: int
+    invalid_or_optout: int
+    total_destinatarios: int
+
+
+class SalesCampaignDispatchResponse(BaseModel):
+    campaign_id: UUID
+    status: CampaignStatus
+    job_id: UUID
+    job_type: str
+    idempotency_key: str
+    duplicate: bool
+
+
+class SalesCampaignPreviewContact(BaseModel):
+    id: UUID
+    nome: str
+    telefone: str | None = None
+    email: str | None = None
+    grupo: str | None = None
+
+
+class SalesCampaignPreviewResponse(BaseModel):
+    contacts: list[SalesCampaignPreviewContact]
+    total: int

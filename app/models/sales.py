@@ -277,3 +277,145 @@ class SalesMessage(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class SalesCampaign(Base):
+    __tablename__ = "sales_campaigns"
+    __table_args__ = (
+        CheckConstraint(
+            "message_type IN ('text', 'image', 'video', 'document')",
+            name="ck_sales_campaigns_message_type",
+        ),
+        CheckConstraint(
+            "status IN ("
+            "'draft', 'ativa', 'scheduled', 'sending', 'queued', "
+            "'sent', 'paused', 'cancelled', 'failed'"
+            ")",
+            name="ck_sales_campaigns_status",
+        ),
+        CheckConstraint(
+            "total_recipients >= 0 "
+            "AND queued_count >= 0 "
+            "AND sent_count >= 0 "
+            "AND failed_count >= 0 "
+            "AND skipped_count >= 0",
+            name="ck_sales_campaigns_counts_non_negative",
+        ),
+        Index(
+            "uq_sales_campaigns_tenant_idempotency",
+            "tenant_id",
+            "idempotency_key",
+            unique=True,
+        ),
+        Index(
+            "ix_sales_campaigns_tenant_status_created",
+            "tenant_id",
+            "status",
+            "created_at",
+        ),
+        Index(
+            "ix_sales_campaigns_tenant_scheduled",
+            "tenant_id",
+            "scheduled_at",
+            postgresql_where=text("scheduled_at IS NOT NULL"),
+        ),
+        Index("ix_sales_campaigns_channel", "channel_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_channels.id", ondelete="SET NULL")
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    message_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="text", server_default="text"
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="draft", server_default="draft"
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    scheduled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_recipients: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    queued_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    sent_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    skipped_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    updated_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SalesCampaignRecipient(Base):
+    __tablename__ = "sales_campaign_recipients"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'queued', 'sent', 'failed', 'skipped')",
+            name="ck_sales_campaign_recipients_status",
+        ),
+        Index(
+            "uq_sales_campaign_recipients_campaign_contact",
+            "tenant_id",
+            "campaign_id",
+            "contact_id",
+            unique=True,
+            postgresql_where=text("contact_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_sales_campaign_recipients_campaign_status",
+            "tenant_id",
+            "campaign_id",
+            "status",
+        ),
+        Index("ix_sales_campaign_recipients_contact", "contact_id"),
+        Index("ix_sales_campaign_recipients_message", "message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    campaign_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_campaigns.id", ondelete="CASCADE"), nullable=False
+    )
+    contact_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_contacts.id", ondelete="SET NULL")
+    )
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_conversations.id", ondelete="SET NULL")
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_messages.id", ondelete="SET NULL")
+    )
+    recipient_name: Mapped[str | None] = mapped_column(String(180))
+    phone_normalized: Mapped[str | None] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default="pending"
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+    recipient_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )

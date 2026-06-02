@@ -541,6 +541,742 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/:
+    get:
+      tags:
+      - sales-campaigns
+      summary: List Campaigns
+      operationId: list_campaigns_api_v2_labby_campaigns__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-campaigns
+      summary: Create Campaign
+      operationId: create_campaign_api_v2_labby_campaigns__post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/:
+    get:
+      tags:
+      - sales-campaigns
+      summary: List Campaigns
+      operationId: list_campaigns_api_v2_labby_sales_campaigns__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: status
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Status
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 20
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-campaigns
+      summary: Create Campaign
+      operationId: create_campaign_api_v2_labby_sales_campaigns__post
+      security:
+      - HTTPBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignCreateRequest'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}:
+    get:
+      tags:
+      - sales-campaigns
+      summary: Get Campaign
+      operationId: get_campaign_api_v2_labby_campaigns__campaign_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-campaigns
+      summary: Update Campaign
+      operationId: update_campaign_api_v2_labby_campaigns__campaign_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-campaigns
+      summary: Delete Campaign
+      operationId: delete_campaign_api_v2_labby_campaigns__campaign_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}:
+    get:
+      tags:
+      - sales-campaigns
+      summary: Get Campaign
+      operationId: get_campaign_api_v2_labby_sales_campaigns__campaign_id__get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDetail'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    put:
+      tags:
+      - sales-campaigns
+      summary: Update Campaign
+      operationId: update_campaign_api_v2_labby_sales_campaigns__campaign_id__put
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignUpdateRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    delete:
+      tags:
+      - sales-campaigns
+      summary: Delete Campaign
+      operationId: delete_campaign_api_v2_labby_sales_campaigns__campaign_id__delete
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDeleteResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}/recipients:
+    get:
+      tags:
+      - sales-campaigns
+      summary: List Campaign Recipients
+      operationId: list_campaign_recipients_api_v2_labby_campaigns__campaign_id__recipients_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignRecipientsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-campaigns
+      summary: Add Campaign Recipients
+      operationId: add_campaign_recipients_api_v2_labby_campaigns__campaign_id__recipients_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignRecipientsRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignAddRecipientsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}/recipients:
+    get:
+      tags:
+      - sales-campaigns
+      summary: List Campaign Recipients
+      operationId: list_campaign_recipients_api_v2_labby_sales_campaigns__campaign_id__recipients_get
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          default: 1
+          title: Page
+      - name: per_page
+        in: query
+        required: false
+        schema:
+          type: integer
+          maximum: 100
+          minimum: 1
+          default: 50
+          title: Per Page
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignRecipientsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - sales-campaigns
+      summary: Add Campaign Recipients
+      operationId: add_campaign_recipients_api_v2_labby_sales_campaigns__campaign_id__recipients_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SalesCampaignRecipientsRequest'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignAddRecipientsResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}/preview-recipients:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Preview Campaign Recipients
+      operationId: preview_campaign_recipients_api_v2_labby_campaigns__campaign_id__preview_recipients_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignPreviewResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}/preview-recipients:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Preview Campaign Recipients
+      operationId: preview_campaign_recipients_api_v2_labby_sales_campaigns__campaign_id__preview_recipients_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignPreviewResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}/start:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Start Campaign
+      operationId: start_campaign_api_v2_labby_campaigns__campaign_id__start_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}/start:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Start Campaign
+      operationId: start_campaign_api_v2_labby_sales_campaigns__campaign_id__start_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}/cancel:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Cancel Campaign
+      operationId: cancel_campaign_api_v2_labby_campaigns__campaign_id__cancel_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}/cancel:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Cancel Campaign
+      operationId: cancel_campaign_api_v2_labby_sales_campaigns__campaign_id__cancel_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignMutationResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/campaigns/{campaign_id}/dispatch:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Dispatch Campaign
+      operationId: dispatch_campaign_api_v2_labby_campaigns__campaign_id__dispatch_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SalesCampaignDispatchRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDispatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /api/v2/labby/sales/campaigns/{campaign_id}/dispatch:
+    post:
+      tags:
+      - sales-campaigns
+      summary: Dispatch Campaign
+      operationId: dispatch_campaign_api_v2_labby_sales_campaigns__campaign_id__dispatch_post
+      security:
+      - HTTPBearer: []
+      parameters:
+      - name: campaign_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          title: Campaign Id
+      requestBody:
+        content:
+          application/json:
+            schema:
+              anyOf:
+              - $ref: '#/components/schemas/SalesCampaignDispatchRequest'
+              - type: 'null'
+              title: Data
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SalesCampaignDispatchResponse'
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /api/v2/labby/channels/:
     get:
       tags:
@@ -4338,6 +5074,651 @@ components:
       - token
       - senha
       title: ResetPasswordRequest
+    SalesCampaignAddRecipientsResponse:
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          title: Campaign Id
+        requested:
+          type: integer
+          title: Requested
+        inserted:
+          type: integer
+          title: Inserted
+        duplicates:
+          type: integer
+          title: Duplicates
+        invalid_or_optout:
+          type: integer
+          title: Invalid Or Optout
+        total_destinatarios:
+          type: integer
+          title: Total Destinatarios
+      type: object
+      required:
+      - campaign_id
+      - requested
+      - inserted
+      - duplicates
+      - invalid_or_optout
+      - total_destinatarios
+      title: SalesCampaignAddRecipientsResponse
+    SalesCampaignCreateRequest:
+      properties:
+        nome:
+          type: string
+          maxLength: 180
+          minLength: 1
+          title: Nome
+        conteudo:
+          type: string
+          minLength: 1
+          title: Conteudo
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
+        channel_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Channel Id
+        tipo_mensagem:
+          type: string
+          enum:
+          - text
+          - image
+          - video
+          - document
+          title: Tipo Mensagem
+          default: text
+        contact_ids:
+          anyOf:
+          - items:
+              type: string
+              format: uuid
+            type: array
+            maxItems: 1000
+          - type: 'null'
+          title: Contact Ids
+        contatos_ids:
+          anyOf:
+          - items:
+              type: string
+              format: uuid
+            type: array
+            maxItems: 1000
+          - type: 'null'
+          title: Contatos Ids
+        scheduled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Scheduled At
+        agendado_para:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Agendado Para
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Idempotency Key
+      type: object
+      required:
+      - nome
+      - conteudo
+      title: SalesCampaignCreateRequest
+    SalesCampaignDeleteResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - message
+      title: SalesCampaignDeleteResponse
+    SalesCampaignDetail:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        status:
+          type: string
+          enum:
+          - draft
+          - ativa
+          - scheduled
+          - sending
+          - queued
+          - sent
+          - paused
+          - cancelled
+          - failed
+          title: Status
+        channel_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Channel Id
+        channel_tipo:
+          anyOf:
+          - type: string
+            enum:
+            - whatsapp_evolution
+            - whatsapp_cloud
+            - telegram
+            - discord
+            - web_chatbot
+          - type: 'null'
+          title: Channel Tipo
+        total_destinatarios:
+          type: integer
+          title: Total Destinatarios
+        queued_count:
+          type: integer
+          title: Queued Count
+        sent_count:
+          type: integer
+          title: Sent Count
+        failed_count:
+          type: integer
+          title: Failed Count
+        skipped_count:
+          type: integer
+          title: Skipped Count
+        scheduled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Scheduled At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
+        conteudo:
+          type: string
+          title: Conteudo
+        tipo_mensagem:
+          type: string
+          enum:
+          - text
+          - image
+          - video
+          - document
+          title: Tipo Mensagem
+        idempotency_key:
+          type: string
+          title: Idempotency Key
+        started_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Started At
+        finished_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Finished At
+      type: object
+      required:
+      - id
+      - nome
+      - status
+      - total_destinatarios
+      - queued_count
+      - sent_count
+      - failed_count
+      - skipped_count
+      - created_at
+      - updated_at
+      - conteudo
+      - tipo_mensagem
+      - idempotency_key
+      title: SalesCampaignDetail
+    SalesCampaignDispatchRequest:
+      properties:
+        idempotency_key:
+          anyOf:
+          - type: string
+            maxLength: 255
+          - type: 'null'
+          title: Idempotency Key
+      type: object
+      title: SalesCampaignDispatchRequest
+    SalesCampaignDispatchResponse:
+      properties:
+        campaign_id:
+          type: string
+          format: uuid
+          title: Campaign Id
+        status:
+          type: string
+          enum:
+          - draft
+          - ativa
+          - scheduled
+          - sending
+          - queued
+          - sent
+          - paused
+          - cancelled
+          - failed
+          title: Status
+        job_id:
+          type: string
+          format: uuid
+          title: Job Id
+        job_type:
+          type: string
+          title: Job Type
+        idempotency_key:
+          type: string
+          title: Idempotency Key
+        duplicate:
+          type: boolean
+          title: Duplicate
+      type: object
+      required:
+      - campaign_id
+      - status
+      - job_id
+      - job_type
+      - idempotency_key
+      - duplicate
+      title: SalesCampaignDispatchResponse
+    SalesCampaignListItem:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        status:
+          type: string
+          enum:
+          - draft
+          - ativa
+          - scheduled
+          - sending
+          - queued
+          - sent
+          - paused
+          - cancelled
+          - failed
+          title: Status
+        channel_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Channel Id
+        channel_tipo:
+          anyOf:
+          - type: string
+            enum:
+            - whatsapp_evolution
+            - whatsapp_cloud
+            - telegram
+            - discord
+            - web_chatbot
+          - type: 'null'
+          title: Channel Tipo
+        total_destinatarios:
+          type: integer
+          title: Total Destinatarios
+        queued_count:
+          type: integer
+          title: Queued Count
+        sent_count:
+          type: integer
+          title: Sent Count
+        failed_count:
+          type: integer
+          title: Failed Count
+        skipped_count:
+          type: integer
+          title: Skipped Count
+        scheduled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Scheduled At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        updated_at:
+          type: string
+          format: date-time
+          title: Updated At
+      type: object
+      required:
+      - id
+      - nome
+      - status
+      - total_destinatarios
+      - queued_count
+      - sent_count
+      - failed_count
+      - skipped_count
+      - created_at
+      - updated_at
+      title: SalesCampaignListItem
+    SalesCampaignMutationResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        status:
+          type: string
+          enum:
+          - draft
+          - ativa
+          - scheduled
+          - sending
+          - queued
+          - sent
+          - paused
+          - cancelled
+          - failed
+          title: Status
+        total_destinatarios:
+          type: integer
+          title: Total Destinatarios
+        message:
+          type: string
+          title: Message
+      type: object
+      required:
+      - id
+      - nome
+      - status
+      - total_destinatarios
+      - message
+      title: SalesCampaignMutationResponse
+    SalesCampaignPreviewContact:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        nome:
+          type: string
+          title: Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        email:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Email
+        grupo:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Grupo
+      type: object
+      required:
+      - id
+      - nome
+      title: SalesCampaignPreviewContact
+    SalesCampaignPreviewResponse:
+      properties:
+        contacts:
+          items:
+            $ref: '#/components/schemas/SalesCampaignPreviewContact'
+          type: array
+          title: Contacts
+        total:
+          type: integer
+          title: Total
+      type: object
+      required:
+      - contacts
+      - total
+      title: SalesCampaignPreviewResponse
+    SalesCampaignRecipientResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        campaign_id:
+          type: string
+          format: uuid
+          title: Campaign Id
+        contact_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Contact Id
+        contato_nome:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Contato Nome
+        telefone:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Telefone
+        status:
+          type: string
+          enum:
+          - pending
+          - queued
+          - sent
+          - failed
+          - skipped
+          title: Status
+        message_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Message Id
+        conversation_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Conversation Id
+        error:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Error
+        queued_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Queued At
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+      type: object
+      required:
+      - id
+      - campaign_id
+      - status
+      - created_at
+      title: SalesCampaignRecipientResponse
+    SalesCampaignRecipientsRequest:
+      properties:
+        contact_ids:
+          items:
+            type: string
+            format: uuid
+          type: array
+          maxItems: 1000
+          minItems: 1
+          title: Contact Ids
+      type: object
+      required:
+      - contact_ids
+      title: SalesCampaignRecipientsRequest
+    SalesCampaignRecipientsResponse:
+      properties:
+        recipients:
+          items:
+            $ref: '#/components/schemas/SalesCampaignRecipientResponse'
+          type: array
+          title: Recipients
+        total:
+          type: integer
+          title: Total
+        page:
+          type: integer
+          title: Page
+        per_page:
+          type: integer
+          title: Per Page
+        pages:
+          type: integer
+          title: Pages
+      type: object
+      required:
+      - recipients
+      - total
+      - page
+      - per_page
+      - pages
+      title: SalesCampaignRecipientsResponse
+    SalesCampaignUpdateRequest:
+      properties:
+        nome:
+          anyOf:
+          - type: string
+            maxLength: 180
+            minLength: 1
+          - type: 'null'
+          title: Nome
+        conteudo:
+          anyOf:
+          - type: string
+            minLength: 1
+          - type: 'null'
+          title: Conteudo
+        descricao:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Descricao
+        channel_id:
+          anyOf:
+          - type: string
+            format: uuid
+          - type: 'null'
+          title: Channel Id
+        tipo_mensagem:
+          anyOf:
+          - type: string
+            enum:
+            - text
+            - image
+            - video
+            - document
+          - type: 'null'
+          title: Tipo Mensagem
+        status:
+          anyOf:
+          - type: string
+            enum:
+            - draft
+            - ativa
+            - scheduled
+            - sending
+            - queued
+            - sent
+            - paused
+            - cancelled
+            - failed
+          - type: 'null'
+          title: Status
+        scheduled_at:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Scheduled At
+        agendado_para:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Agendado Para
+      type: object
+      title: SalesCampaignUpdateRequest
+    SalesCampaignsResponse:
+      properties:
+        campaigns:
+          items:
+            $ref: '#/components/schemas/SalesCampaignListItem'
+          type: array
+          title: Campaigns
+        total:
+          type: integer
+          title: Total
+        page:
+          type: integer
+          title: Page
+        per_page:
+          type: integer
+          title: Per Page
+        pages:
+          type: integer
+          title: Pages
+      type: object
+      required:
+      - campaigns
+      - total
+      - page
+      - per_page
+      - pages
+      title: SalesCampaignsResponse
     SalesChannelConnectRequest:
       properties:
         bot_token:

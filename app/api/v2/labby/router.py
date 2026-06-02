@@ -6,6 +6,7 @@ from app.api.v2.labby import (
     jobs,
     modules,
     sales_analytics,
+    sales_campaigns,
     sales_channels,
     sales_contacts,
     sales_conversations,
@@ -20,6 +21,7 @@ router.include_router(health.router)
 router.include_router(jobs.router)
 router.include_router(modules.router)
 router.include_router(sales_analytics.router)
+router.include_router(sales_campaigns.router)
 router.include_router(sales_channels.router)
 router.include_router(sales_contacts.router)
 router.include_router(sales_conversations.router)

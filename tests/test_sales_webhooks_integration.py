@@ -206,6 +206,31 @@ def test_evolution_webhook_ignores_message_when_channel_disconnected(
     assert event["job_id"] is None
 
 
+def test_evolution_lifecycle_event_queues_even_when_channel_is_not_connected(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+
+    queued = SalesWebhookReceiver(db_session).receive_evolution(
+        channel_id=str(channel["id"]),
+        payload={"event": "connection.update", "data": {"state": "open"}},
+        headers={"x-labby-webhook-secret": secret},
+    )
+
+    assert queued["status"] == "queued"
+    assert queued["job_id"] is not None
+    assert count_rows(db_session, "webhook_events") == 1
+    assert count_rows(db_session, "jobs") == 1
+
+
 def test_evolution_webhook_rejects_wrong_secret(db_session: Session) -> None:
     channel = SalesChannelService(db_session).create_channel(
         current=current_one(),
