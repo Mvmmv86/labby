@@ -439,12 +439,14 @@ Entregue localmente em 2026-06-01:
 - Endpoints canonicos `/api/v2/labby/sales/contacts/*`.
 - CRUD de contacts com listagem paginada e filtros `search`, `grupo` e `tag`.
 - Batch import em `POST /contacts/batch` e `/sales/contacts/batch`.
+- Batch import com `INSERT ... ON CONFLICT`, idempotente no banco e tolerante a
+  falha parcial por linha.
 - `require_module("sales")` no router.
 - Actor por `created_by_membership_id` e `updated_by_membership_id`.
 - Unique parcial por `tenant_id + phone_normalized`.
 - Normalizacao de telefone/email.
-- Testes de contrato flat/canonico, modulo `sales`, idempotencia de batch e
-  cross-tenant negativo no service.
+- Testes de contrato flat/canonico, modulo `sales`, idempotencia de batch,
+  cross-tenant negativo no service e integracao real com Postgres no CI.
 - Documento `docs/a3-sales-contacts-handoff.md`.
 
 ### A4 - Integracoes reais standalone

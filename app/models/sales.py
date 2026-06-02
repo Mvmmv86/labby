@@ -27,6 +27,7 @@ class SalesContact(Base):
         Index("ix_sales_contacts_tenant_status_created_at", "tenant_id", "status", "created_at"),
         Index("ix_sales_contacts_tenant_group_name", "tenant_id", "group_name"),
         Index("ix_sales_contacts_tenant_last_interaction", "tenant_id", "last_interaction_at"),
+        Index("ix_sales_contacts_tags_gin", "tags", postgresql_using="gin"),
         Index(
             "uq_sales_contacts_tenant_phone_normalized",
             "tenant_id",

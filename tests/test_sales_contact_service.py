@@ -44,6 +44,17 @@ class FakeSession:
     def rollback(self) -> None:
         self.rollbacks += 1
 
+    def begin_nested(self):
+        return FakeNestedTransaction()
+
+
+class FakeNestedTransaction:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
 
 def make_current(role: str = "admin", modules: tuple[str, ...] = ("sales",)):
     return CurrentMembership(
@@ -171,9 +182,8 @@ def test_get_contact_rejects_cross_tenant_row() -> None:
 def test_batch_import_is_idempotent_by_tenant_phone() -> None:
     db = FakeSession(
         [
+            FakeResult(row={"inserted": True}),
             FakeResult(row=None),
-            FakeResult(),
-            FakeResult(row={"id": UUID("44444444-4444-4444-4444-444444444444")}),
         ]
     )
     service = SalesContactService(db)
@@ -194,3 +204,5 @@ def test_batch_import_is_idempotent_by_tenant_phone() -> None:
     assert result["erros"] == 1
     assert result["sem_telefone"] == 1
     assert db.commits == 1
+    assert "ON CONFLICT (tenant_id, phone_normalized)" in db.calls[0][0]
+    assert "DO NOTHING" in db.calls[0][0]

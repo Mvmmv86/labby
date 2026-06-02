@@ -30,6 +30,11 @@ Data: 2026-06-01
 - Normalizacao de email por `normalize_email`.
 - Unique parcial por `tenant_id + phone_normalized` quando telefone existe.
 - Batch import idempotente por telefone normalizado dentro do tenant.
+- Batch import usa `INSERT ... ON CONFLICT` no indice parcial
+  `tenant_id + phone_normalized`, com `DO NOTHING` para `skip` e `DO UPDATE`
+  para `update`.
+- Batch import usa savepoint por linha via transacao aninhada para manter
+  tolerancia a falha parcial.
 - Respostas mantem campos esperados pelo frontend legado:
   - `nome`
   - `telefone`
@@ -61,6 +66,7 @@ Isso preserva contrato sem fingir integracao ainda inexistente.
   criado duas vezes.
 - Batch import com `on_duplicate=skip` nao duplica contato.
 - Batch import com `on_duplicate=update` atualiza o contato existente.
+- Linha ruim no batch nao derruba as demais linhas validas.
 - Nenhuma rota de Contacts deve funcionar sem modulo `sales`.
 
 ## Validacao local
@@ -69,6 +75,8 @@ Isso preserva contrato sem fingir integracao ainda inexistente.
 - `pytest -q`
 - `alembic upgrade head --sql`
 - OpenAPI regenerado em `contracts/labby-openapi.yaml`.
+- CI sobe Postgres e roda testes de integracao quando
+  `LABBY_TEST_DATABASE_URL` esta configurado.
 
 ## Proxima fatia
 

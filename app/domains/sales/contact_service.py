@@ -5,6 +5,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import CurrentMembership
@@ -82,7 +83,7 @@ class SalesContactService:
                         last_interaction_at, created_at
                     FROM sales_contacts
                     WHERE {where_sql}
-                    ORDER BY last_interaction_at DESC NULLS LAST, created_at DESC
+                    ORDER BY last_interaction_at DESC NULLS LAST, created_at DESC, id DESC
                     LIMIT :limit OFFSET :offset
                     """
                 ),
@@ -138,40 +139,44 @@ class SalesContactService:
         if phone_normalized:
             self._raise_if_phone_exists(current=current, phone_normalized=phone_normalized)
 
-        row = (
-            self.db.execute(
-                text(
-                    """
-                    INSERT INTO sales_contacts (
-                        tenant_id, name, phone, phone_normalized, email_normalized,
-                        group_name, tags, notes, custom_fields, created_by_membership_id,
-                        updated_by_membership_id
-                    )
-                    VALUES (
-                        :tenant_id, :name, :phone, :phone_normalized, :email_normalized,
-                        :group_name, CAST(:tags AS jsonb), :notes, CAST(:custom_fields AS jsonb),
-                        :membership_id, :membership_id
-                    )
-                    RETURNING *
-                    """
-                ),
-                {
-                    "tenant_id": str(current.tenant_id),
-                    "membership_id": str(current.membership_id),
-                    "name": self._required_string(nome, "Nome e obrigatorio"),
-                    "phone": self._optional_string(telefone),
-                    "phone_normalized": phone_normalized,
-                    "email_normalized": normalize_email(email) if email else None,
-                    "group_name": self._optional_string(grupo),
-                    "tags": self._json_array(self._clean_tags(tags)),
-                    "notes": self._optional_string(notas),
-                    "custom_fields": self._json_object(campos_custom or {}),
-                },
+        try:
+            row = (
+                self.db.execute(
+                    text(
+                        """
+                        INSERT INTO sales_contacts (
+                            tenant_id, name, phone, phone_normalized, email_normalized,
+                            group_name, tags, notes, custom_fields, created_by_membership_id,
+                            updated_by_membership_id
+                        )
+                        VALUES (
+                            :tenant_id, :name, :phone, :phone_normalized, :email_normalized,
+                            :group_name, CAST(:tags AS jsonb), :notes,
+                            CAST(:custom_fields AS jsonb), :membership_id, :membership_id
+                        )
+                        RETURNING *
+                        """
+                    ),
+                    {
+                        "tenant_id": str(current.tenant_id),
+                        "membership_id": str(current.membership_id),
+                        "name": self._required_string(nome, "Nome e obrigatorio"),
+                        "phone": self._optional_string(telefone),
+                        "phone_normalized": phone_normalized,
+                        "email_normalized": normalize_email(email) if email else None,
+                        "group_name": self._optional_string(grupo),
+                        "tags": self._json_array(self._clean_tags(tags)),
+                        "notes": self._optional_string(notas),
+                        "custom_fields": self._json_object(campos_custom or {}),
+                    },
+                )
+                .mappings()
+                .first()
             )
-            .mappings()
-            .first()
-        )
-        self.db.commit()
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            self._raise_contact_integrity_error(exc)
         return self._mutation_row(row, message="Contato criado com sucesso")
 
     def update_contact(
@@ -237,21 +242,25 @@ class SalesContactService:
         if len(updates) == 2:
             raise HTTPException(status_code=400, detail="Nenhum campo para atualizar")
 
-        row = (
-            self.db.execute(
-                text(
-                    f"""
-                    UPDATE sales_contacts
-                    SET {", ".join(updates)}
-                    WHERE id = :contact_id AND tenant_id = :tenant_id
-                    RETURNING *
-                    """
-                ),
-                params,
+        try:
+            row = (
+                self.db.execute(
+                    text(
+                        f"""
+                        UPDATE sales_contacts
+                        SET {", ".join(updates)}
+                        WHERE id = :contact_id AND tenant_id = :tenant_id
+                        RETURNING *
+                        """
+                    ),
+                    params,
+                )
+                .mappings()
+                .first()
             )
-            .mappings()
-            .first()
-        )
+        except IntegrityError as exc:
+            self.db.rollback()
+            self._raise_contact_integrity_error(exc)
         if row is None:
             self.db.rollback()
             raise HTTPException(status_code=404, detail="Contato nao encontrado")
@@ -305,9 +314,8 @@ class SalesContactService:
             if not phone_normalized:
                 sem_telefone += 1
                 erros += 1
-                detalhes_erros.append(
-                    {"linha": index, "telefone": raw_phone, "erro": "Telefone invalido"}
-                )
+                error_label = "Telefone vazio" if not raw_phone else "Telefone invalido"
+                detalhes_erros.append({"linha": index, "telefone": raw_phone, "erro": error_label})
                 continue
 
             name = str(contact.get("nome") or "").strip() or "Sem nome"
@@ -318,73 +326,31 @@ class SalesContactService:
             custom_fields = contact.get("campos_custom") if isinstance(contact, dict) else None
             custom_fields = custom_fields if isinstance(custom_fields, dict) else {}
 
-            existing = self._find_by_phone(current=current, phone_normalized=phone_normalized)
-            if existing and on_duplicate == "skip":
-                duplicados += 1
-                continue
-
-            if existing:
-                self.db.execute(
-                    text(
-                        """
-                        UPDATE sales_contacts
-                        SET name = :name,
-                            phone = :phone,
-                            email_normalized = :email_normalized,
-                            group_name = :group_name,
-                            tags = CAST(:tags AS jsonb),
-                            notes = :notes,
-                            custom_fields = custom_fields || CAST(:custom_fields AS jsonb),
-                            updated_by_membership_id = :membership_id,
-                            updated_at = now()
-                        WHERE id = :contact_id AND tenant_id = :tenant_id
-                        """
-                    ),
-                    {
-                        "tenant_id": str(current.tenant_id),
-                        "membership_id": str(current.membership_id),
-                        "contact_id": str(existing["id"]),
-                        "name": name,
-                        "phone": raw_phone,
-                        "email_normalized": normalize_email(email) if email else None,
-                        "group_name": grupo,
-                        "tags": self._json_array(tags),
-                        "notes": notas,
-                        "custom_fields": self._json_object(custom_fields),
-                    },
+            try:
+                with self.db.begin_nested():
+                    row = self._upsert_batch_contact(
+                        current=current,
+                        name=name,
+                        phone=raw_phone,
+                        phone_normalized=phone_normalized,
+                        email=email,
+                        grupo=grupo,
+                        tags=tags,
+                        notas=notas,
+                        custom_fields=custom_fields,
+                        on_duplicate=on_duplicate,
+                    )
+            except Exception as exc:
+                erros += 1
+                detalhes_erros.append(
+                    {"linha": index, "telefone": raw_phone, "erro": str(exc)[:200]}
                 )
-                importados += 1
                 continue
 
-            self.db.execute(
-                text(
-                    """
-                    INSERT INTO sales_contacts (
-                        tenant_id, name, phone, phone_normalized, email_normalized,
-                        group_name, tags, notes, custom_fields, created_by_membership_id,
-                        updated_by_membership_id
-                    )
-                    VALUES (
-                        :tenant_id, :name, :phone, :phone_normalized, :email_normalized,
-                        :group_name, CAST(:tags AS jsonb), :notes, CAST(:custom_fields AS jsonb),
-                        :membership_id, :membership_id
-                    )
-                    """
-                ),
-                {
-                    "tenant_id": str(current.tenant_id),
-                    "membership_id": str(current.membership_id),
-                    "name": name,
-                    "phone": raw_phone,
-                    "phone_normalized": phone_normalized,
-                    "email_normalized": normalize_email(email) if email else None,
-                    "group_name": grupo,
-                    "tags": self._json_array(tags),
-                    "notes": notas,
-                    "custom_fields": self._json_object(custom_fields),
-                },
-            )
-            importados += 1
+            if row is None:
+                duplicados += 1
+            else:
+                importados += 1
 
         self.db.commit()
         return {
@@ -436,6 +402,85 @@ class SalesContactService:
             .mappings()
             .first()
         )
+
+    def _upsert_batch_contact(
+        self,
+        *,
+        current: CurrentMembership,
+        name: str,
+        phone: str,
+        phone_normalized: str,
+        email: str | None,
+        grupo: str | None,
+        tags: list[str],
+        notas: str | None,
+        custom_fields: dict[str, Any],
+        on_duplicate: str,
+    ):
+        params = {
+            "tenant_id": str(current.tenant_id),
+            "membership_id": str(current.membership_id),
+            "name": name,
+            "phone": phone,
+            "phone_normalized": phone_normalized,
+            "email_normalized": normalize_email(email) if email else None,
+            "group_name": grupo,
+            "tags": self._json_array(tags),
+            "notes": notas,
+            "custom_fields": self._json_object(custom_fields),
+        }
+        if on_duplicate == "update":
+            statement = """
+                INSERT INTO sales_contacts (
+                    tenant_id, name, phone, phone_normalized, email_normalized,
+                    group_name, tags, notes, custom_fields, created_by_membership_id,
+                    updated_by_membership_id
+                )
+                VALUES (
+                    :tenant_id, :name, :phone, :phone_normalized, :email_normalized,
+                    :group_name, CAST(:tags AS jsonb), :notes, CAST(:custom_fields AS jsonb),
+                    :membership_id, :membership_id
+                )
+                ON CONFLICT (tenant_id, phone_normalized)
+                    WHERE phone_normalized IS NOT NULL
+                DO UPDATE SET
+                    name = EXCLUDED.name,
+                    phone = EXCLUDED.phone,
+                    email_normalized = EXCLUDED.email_normalized,
+                    group_name = EXCLUDED.group_name,
+                    tags = EXCLUDED.tags,
+                    notes = EXCLUDED.notes,
+                    custom_fields = sales_contacts.custom_fields || EXCLUDED.custom_fields,
+                    updated_by_membership_id = EXCLUDED.updated_by_membership_id,
+                    updated_at = now()
+                RETURNING (xmax = 0) AS inserted
+            """
+        else:
+            statement = """
+                INSERT INTO sales_contacts (
+                    tenant_id, name, phone, phone_normalized, email_normalized,
+                    group_name, tags, notes, custom_fields, created_by_membership_id,
+                    updated_by_membership_id
+                )
+                VALUES (
+                    :tenant_id, :name, :phone, :phone_normalized, :email_normalized,
+                    :group_name, CAST(:tags AS jsonb), :notes, CAST(:custom_fields AS jsonb),
+                    :membership_id, :membership_id
+                )
+                ON CONFLICT (tenant_id, phone_normalized)
+                    WHERE phone_normalized IS NOT NULL
+                DO NOTHING
+                RETURNING true AS inserted
+            """
+        return self.db.execute(text(statement), params).mappings().first()
+
+    @staticmethod
+    def _raise_contact_integrity_error(exc: IntegrityError) -> None:
+        constraint_name = getattr(getattr(exc, "orig", None), "diag", None)
+        constraint_name = getattr(constraint_name, "constraint_name", "") or str(exc.orig)
+        if "uq_sales_contacts_tenant_phone_normalized" in constraint_name:
+            raise HTTPException(status_code=409, detail="Ja existe um contato com esse telefone")
+        raise HTTPException(status_code=409, detail="Conflito ao salvar contato")
 
     @staticmethod
     def _contact_list_row(row) -> dict[str, Any]:
