@@ -188,6 +188,30 @@ def test_sales_inbox_list_summary_and_contact_aggregates_hit_real_postgres(
     assert detail["conversas_recentes"][0]["id"] == conversation_id
 
 
+def test_sales_inbox_notification_summary_counts_beyond_preview_limit(
+    db_session: Session,
+) -> None:
+    contact_id = create_contact(
+        db_session,
+        tenant_current=current_one(),
+        nome="Paula",
+        telefone="(11) 99999-0000",
+    )
+
+    for _ in range(55):
+        create_conversation(
+            db_session,
+            tenant_id=TENANT_1,
+            contact_id=contact_id,
+            waiting_for_human=True,
+        )
+
+    summary = SalesConversationService(db_session).notification_summary(current=current_one())
+
+    assert summary["transferencias_pendentes"] == 55
+    assert len(summary["conversas_aguardando"]) == 50
+
+
 def test_sales_inbox_messages_mark_read_and_send_update_real_rows(
     db_session: Session,
 ) -> None:

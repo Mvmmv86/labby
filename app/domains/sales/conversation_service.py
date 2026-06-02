@@ -248,9 +248,21 @@ class SalesConversationService:
             ),
             params,
         ).scalar_one()
+        total_waiting = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM sales_conversations c
+                WHERE c.tenant_id = :tenant_id
+                  AND c.waiting_for_human = true
+                  AND c.status != 'fechada'
+                """
+            ),
+            params,
+        ).scalar_one()
 
         return {
-            "transferencias_pendentes": len(rows),
+            "transferencias_pendentes": int(total_waiting or 0),
             "total_nao_lidas": int(total_unread or 0),
             "conversas_aguardando": [
                 {
