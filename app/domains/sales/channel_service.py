@@ -22,6 +22,7 @@ SECRET_CONFIG_KEYS = {
     "token",
     "webhook_secret",
 }
+CHANNELS_WAITING_FOR_INBOUND = {"telegram", "discord", "whatsapp_cloud"}
 
 
 class SalesChannelService:
@@ -241,6 +242,15 @@ class SalesChannelService:
                 result.config,
             )
             return result.response
+
+        if channel_type in CHANNELS_WAITING_FOR_INBOUND:
+            raise HTTPException(
+                status_code=501,
+                detail=(
+                    "Conexao deste canal aguarda o receiver de webhook inbound "
+                    "da Labby"
+                ),
+            )
 
         if channel_type == "telegram":
             return await self._connect_telegram(channel_id, str(current.tenant_id), row, data)

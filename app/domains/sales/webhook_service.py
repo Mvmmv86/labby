@@ -12,6 +12,7 @@ from app.domains.jobs.job_service import JobQueueService
 
 SALES_EVOLUTION_WEBHOOK_JOB = "sales.webhook.evolution"
 SALES_WEBHOOK_QUEUE = "worker-sales-webhooks"
+EVOLUTION_CHANNEL_LIFECYCLE_EVENTS = {"connection.update", "qrcode.updated"}
 
 SECRET_HEADER_NAMES = {
     "authorization",
@@ -59,6 +60,25 @@ class SalesWebhookReceiver:
             provider="evolution",
             idempotency_key=idempotency_key,
         )
+        if (
+            str(channel["status"]) != "conectado"
+            and event_type not in EVOLUTION_CHANNEL_LIFECYCLE_EVENTS
+        ):
+            event_id = self._record_ignored_evolution_event(
+                channel_id=channel_id,
+                tenant_id=str(channel["tenant_id"]),
+                event_type=event_type,
+                external_event_id=external_event_id,
+                idempotency_key=idempotency_key,
+                headers=headers,
+                payload=payload,
+            )
+            return {
+                "status": "ignored",
+                "webhook_event_id": UUID(str(event_id)),
+                "job_id": None,
+                "duplicate": duplicate,
+            }
 
         event_id = self.job_queue.record_webhook_event(
             tenant_id=str(channel["tenant_id"]),
@@ -114,7 +134,7 @@ class SalesWebhookReceiver:
             self.db.execute(
                 text(
                     """
-                    SELECT id, tenant_id, channel_type, webhook_secret
+                    SELECT id, tenant_id, channel_type, status, webhook_secret
                     FROM sales_channels
                     WHERE id = :channel_id
                     """
@@ -124,6 +144,49 @@ class SalesWebhookReceiver:
             .mappings()
             .first()
         )
+
+    def _record_ignored_evolution_event(
+        self,
+        *,
+        channel_id: str,
+        tenant_id: str,
+        event_type: str,
+        external_event_id: str | None,
+        idempotency_key: str,
+        headers: dict[str, str],
+        payload: dict[str, Any],
+    ) -> str:
+        event_id = self.job_queue.record_webhook_event(
+            tenant_id=tenant_id,
+            provider="evolution",
+            external_event_id=external_event_id,
+            event_type=event_type,
+            idempotency_key=idempotency_key,
+            signature_valid=True,
+            headers=_safe_headers(headers),
+            payload={
+                "channel_id": channel_id,
+                "raw": payload,
+            },
+            commit=False,
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE webhook_events
+                SET status = 'ignored',
+                    processed_at = NOW(),
+                    error_code = 'channel_not_connected',
+                    error_message = 'Channel is not connected',
+                    updated_at = NOW()
+                WHERE id = :event_id
+                  AND status = 'received'
+                """
+            ),
+            {"event_id": event_id},
+        )
+        self.db.commit()
+        return str(event_id)
 
     def _webhook_event_exists(
         self,

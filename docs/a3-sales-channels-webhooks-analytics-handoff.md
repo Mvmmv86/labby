@@ -57,11 +57,17 @@ Analytics flat e canonico:
   clara de provider nao configurado.
 - Web Chat gera `widget_id` e snippet publico a partir de
   `LABBY_PUBLIC_API_BASE_URL`.
+- Connect real fica habilitado somente para Evolution e Web Chatbot nesta
+  fatia. Telegram, Discord e WhatsApp Cloud podem ser cadastrados, mas o
+  connect retorna `501` ate seus receivers inbound existirem.
 - O webhook Evolution valida segredo por comparacao constante e aceita os
   headers `X-Labby-Webhook-Secret`, `X-OmniaFlow-Webhook-Secret` e
   `X-Evolution-Token`.
 - Evento bruto e job sao gravados na mesma transacao usando
   `webhook_events` + `jobs`.
+- Eventos Evolution que criariam ou atualizariam mensagens so viram job quando
+  o canal esta `conectado`. Se o canal esta desconectado, o evento bruto e
+  persistido como `ignored` e nenhum job e criado.
 - Handler do job cria/atualiza contato, vinculo de canal, conversa e mensagem,
   com dedupe por `tenant_id + provider + external_id`.
 - Analytics usa apenas tabelas ja existentes. `campanhas_ativas` fica `0` ate
@@ -75,6 +81,9 @@ Analytics flat e canonico:
 - Contadores de contato so sao incrementados quando a mensagem externa e
   inserida de fato.
 - Webhook invalido por secret errado retorna `401`.
+- Webhook de mensagem em canal desconectado nao cria job nem mensagem.
+- Connect de Telegram, Discord e WhatsApp Cloud fica bloqueado ate haver rota
+  inbound correspondente.
 - Channels tem aliases flat porque campanhas e bots ainda usam `/channels/`.
 
 ## Testes adicionados
@@ -90,6 +99,8 @@ Analytics flat e canonico:
   - redacao de config sensivel;
   - webhook Evolution em Postgres real;
   - duplicate webhook sem duplicar mensagem;
+  - mensagem Evolution ignorada quando canal esta desconectado;
+  - connect externo bloqueado para provider sem inbound;
   - segredo errado rejeitado.
 - `tests/test_sales_analytics_routes.py`
   - contrato flat/canonico do dashboard, volume e activity.

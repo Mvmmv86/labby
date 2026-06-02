@@ -494,6 +494,9 @@ Entregue localmente em 2026-06-02, fatia Channels/Webhook Evolution/Analytics:
 - Mutations de channels exigem modulo `sales` e role `owner/admin`.
 - Integracao standalone de canais em `app/integrations/sales_channels.py`,
   usando `LABBY_*`.
+- Connect real habilitado nesta fatia para `whatsapp_evolution` e
+  `web_chatbot`; `telegram`, `discord` e `whatsapp_cloud` aguardam receivers
+  inbound e retornam `501` ao conectar.
 - Settings:
   - `LABBY_PUBLIC_API_BASE_URL`
   - `LABBY_EVOLUTION_API_URL`
@@ -503,6 +506,8 @@ Entregue localmente em 2026-06-02, fatia Channels/Webhook Evolution/Analytics:
 - Webhook Evolution valida segredo por comparacao constante.
 - Evento bruto e job `sales.webhook.evolution` gravados na mesma transacao via
   `webhook_events` e `jobs`.
+- Webhook Evolution persiste mensagem recebida como `ignored`, sem criar job,
+  quando o canal nao esta `conectado`.
 - Handler do job Evolution cria/atualiza contato, vinculo de canal, conversa e
   mensagem.
 - Dedupe de webhook/mensagem por idempotencia do evento e por
@@ -517,6 +522,8 @@ Entregue localmente em 2026-06-02, fatia Channels/Webhook Evolution/Analytics:
 - Teste de webhook publico Evolution.
 - Teste de integracao Postgres para webhook Evolution duplicado sem duplicar
   mensagem.
+- Teste de webhook Evolution em canal desconectado sem criar job/mensagem.
+- Teste de connect bloqueado para provider sem inbound.
 - Documento `docs/a3-sales-channels-webhooks-analytics-handoff.md`.
 
 Ainda falta em A3:

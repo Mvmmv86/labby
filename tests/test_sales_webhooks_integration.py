@@ -1,4 +1,6 @@
 
+import asyncio
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -49,6 +51,11 @@ def test_evolution_webhook_records_event_job_and_ingests_message_once(
         text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
         {"channel_id": channel["id"]},
     ).scalar_one()
+    db_session.execute(
+        text("UPDATE sales_channels SET status = 'conectado' WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    )
+    db_session.commit()
     payload = {
         "event": "messages.upsert",
         "instance": "labby_test",
@@ -137,6 +144,68 @@ def test_evolution_webhook_records_event_job_and_ingests_message_once(
     assert row["external_id"] == "wa-message-1"
 
 
+def test_evolution_webhook_ignores_message_when_channel_disconnected(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    payload = {
+        "event": "messages.upsert",
+        "instance": "labby_test",
+        "data": {
+            "key": {
+                "id": "wa-message-disconnected",
+                "remoteJid": "5511999990001@s.whatsapp.net",
+                "fromMe": False,
+            },
+            "pushName": "Lead Sem Canal",
+            "message": {"conversation": "Ainda quero falar"},
+        },
+    }
+    receiver = SalesWebhookReceiver(db_session)
+
+    ignored = receiver.receive_evolution(
+        channel_id=str(channel["id"]),
+        payload=payload,
+        headers={"x-labby-webhook-secret": secret},
+    )
+    duplicate = receiver.receive_evolution(
+        channel_id=str(channel["id"]),
+        payload=payload,
+        headers={"x-labby-webhook-secret": secret},
+    )
+
+    assert ignored["status"] == "ignored"
+    assert ignored["job_id"] is None
+    assert ignored["duplicate"] is False
+    assert duplicate["status"] == "ignored"
+    assert duplicate["duplicate"] is True
+    assert count_rows(db_session, "webhook_events") == 1
+    assert count_rows(db_session, "jobs") == 0
+    assert count_rows(db_session, "sales_messages") == 0
+
+    event = db_session.execute(
+        text(
+            """
+            SELECT status, error_code, job_id
+            FROM webhook_events
+            WHERE id = :event_id
+            """
+        ),
+        {"event_id": ignored["webhook_event_id"]},
+    ).mappings().one()
+    assert event["status"] == "ignored"
+    assert event["error_code"] == "channel_not_connected"
+    assert event["job_id"] is None
+
+
 def test_evolution_webhook_rejects_wrong_secret(db_session: Session) -> None:
     channel = SalesChannelService(db_session).create_channel(
         current=current_one(),
@@ -152,6 +221,33 @@ def test_evolution_webhook_rejects_wrong_secret(db_session: Session) -> None:
         )
 
     assert exc.value.status_code == 401
+
+
+def test_non_evolution_external_connect_is_gated_until_inbound_exists(
+    db_session: Session,
+) -> None:
+    service = SalesChannelService(db_session)
+    channel = service.create_channel(
+        current=current_one(),
+        tipo="telegram",
+        nome="Telegram",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(
+            service.connect_channel(
+                current=current_one(),
+                channel_id=str(channel["id"]),
+                data={"bot_token": "token"},
+            )
+        )
+
+    assert exc.value.status_code == 501
+    status = db_session.execute(
+        text("SELECT status FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    assert status == "desconectado"
 
 
 def count_rows(session: Session, table_name: str) -> int:
