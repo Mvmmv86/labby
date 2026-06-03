@@ -5663,21 +5663,6 @@ components:
             - document
           - type: 'null'
           title: Tipo Mensagem
-        status:
-          anyOf:
-          - type: string
-            enum:
-            - draft
-            - ativa
-            - scheduled
-            - sending
-            - queued
-            - sent
-            - paused
-            - cancelled
-            - failed
-          - type: 'null'
-          title: Status
         scheduled_at:
           anyOf:
           - type: string
@@ -5690,6 +5675,7 @@ components:
             format: date-time
           - type: 'null'
           title: Agendado Para
+      additionalProperties: false
       type: object
       title: SalesCampaignUpdateRequest
     SalesCampaignsResponse:

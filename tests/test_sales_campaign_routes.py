@@ -281,6 +281,18 @@ def test_canonical_sales_campaign_routes_are_available() -> None:
     assert service.current.tenant_id == TENANT_ID
 
 
+def test_campaign_update_rejects_direct_status_change() -> None:
+    client, service = make_client()
+
+    response = client.put(
+        f"/api/v2/labby/campaigns/{CAMPAIGN_ID}",
+        json={"status": "queued"},
+    )
+
+    assert response.status_code == 422
+    assert service.updated_payload is None
+
+
 def test_campaigns_router_requires_sales_module() -> None:
     client, _ = make_client(modules=("social_media",))
 

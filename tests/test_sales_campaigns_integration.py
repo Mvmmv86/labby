@@ -174,6 +174,29 @@ def test_campaign_get_rejects_cross_tenant_row(db_session: Session) -> None:
     assert exc.value.status_code == 404
 
 
+def test_campaign_update_cannot_set_status_directly(db_session: Session) -> None:
+    campaign = SalesCampaignService(db_session).create_campaign(
+        current=current_one(),
+        nome="Campanha sem destinatarios",
+        conteudo="Ola",
+        idempotency_key="campaign:status-guard",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        SalesCampaignService(db_session).update_campaign(
+            current=current_one(),
+            campaign_id=str(campaign["id"]),
+            patch={"status": "ativa"},
+        )
+
+    assert exc.value.status_code == 400
+    status = db_session.execute(
+        text("SELECT status FROM sales_campaigns WHERE id = :campaign_id"),
+        {"campaign_id": campaign["id"]},
+    ).scalar_one()
+    assert status == "draft"
+
+
 def create_contact(session: Session, *, nome: str, telefone: str) -> UUID:
     created = SalesContactService(session).create_contact(
         current=current_one(),

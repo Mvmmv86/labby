@@ -152,6 +152,11 @@ class SalesCampaignService:
     ) -> dict[str, Any]:
         self._assert_sales_access(current)
         self._assert_write_access(current)
+        if "status" in patch:
+            raise HTTPException(
+                status_code=400,
+                detail="Use start, dispatch ou cancel para mudar status da campanha",
+            )
         updates = ["updated_by_membership_id = :membership_id", "updated_at = NOW()"]
         params: dict[str, Any] = {
             "tenant_id": str(current.tenant_id),
@@ -173,9 +178,6 @@ class SalesCampaignService:
         if "tipo_mensagem" in patch:
             updates.append("message_type = :message_type")
             params["message_type"] = patch["tipo_mensagem"]
-        if "status" in patch:
-            updates.append("status = :status")
-            params["status"] = patch["status"]
         if "scheduled_at" in patch:
             updates.append("scheduled_at = :scheduled_at")
             params["scheduled_at"] = patch["scheduled_at"]

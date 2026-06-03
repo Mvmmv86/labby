@@ -43,6 +43,8 @@ Campaigns flat e canonico:
   com unique parcial por `tenant_id + campaign_id + contact_id`.
 - `start` muda a campanha para `ativa`. O `dispatch` exige campanha ativa,
   marca como `sending` e cria job idempotente `sales.campaign.dispatch`.
+- `PUT` nao aceita alteracao direta de `status`; transicoes de estado ficam
+  restritas a `start`, `dispatch` e `cancel`.
 - O worker cria mensagens de saida com status `pending` e provider
   `labby_campaign`; o envio externo real continua deferido para a fatia de
   outbound dispatch.
