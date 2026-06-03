@@ -21,7 +21,12 @@ def get_public_widget_service(db: Session = Depends(get_db)) -> PublicWidgetServ
 def _client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
+        forwarded_chain = [part.strip() for part in forwarded_for.split(",") if part.strip()]
+        if forwarded_chain:
+            return forwarded_chain[-1]
+    real_ip = request.headers.get("x-real-ip")
+    if real_ip and real_ip.strip():
+        return real_ip.strip()
     return request.client.host if request.client else "unknown"
 
 

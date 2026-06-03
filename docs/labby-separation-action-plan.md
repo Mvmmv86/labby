@@ -570,7 +570,11 @@ Entregue localmente em 2026-06-03, fatia Bots/Widget publico:
   payload publico.
 - Widget exige canal `web_chatbot` conectado/ativo.
 - `allowed_origins` em `sales_channels.config` e respeitado quando configurado.
-- Rate limit auditavel para envio/polling via `rate_limit_events`.
+- CORS dedicado em `/widget/*` permite embed cross-origin sem cookies ou
+  credenciais, mantendo `allowed_origins` como controle de aplicacao.
+- Rate limit auditavel para envio/polling via `rate_limit_events`, com chave por
+  IP confiavel e backstop por `widget_id`, sem depender de `visitor_id` enviado
+  pelo cliente.
 - Mensagens do widget usam provider `web_widget` e external id deterministico,
   com `ON CONFLICT DO NOTHING`.
 - Reentrega da mesma mensagem do widget nao duplica contato, conversa,
@@ -578,8 +582,9 @@ Entregue localmente em 2026-06-03, fatia Bots/Widget publico:
 - Runtime minimo de bot no widget com trigger, FAQ, welcome/fallback e
   transferencia para humano, sem chamada externa longa no request publico.
 - OpenAPI regenerado em `contracts/labby-openapi.yaml`.
-- Testes de contrato flat/canonico para bots, contrato publico do widget,
-  metadata, widget idempotente, bot runtime e cross-tenant real no CI.
+- Testes de contrato flat/canonico para bots, contrato publico do widget, CORS
+  cross-origin, rate limit anti-rotacao de `visitor_id`, metadata, widget
+  idempotente, bot runtime e cross-tenant real no CI.
 - Documento `docs/a3-sales-bots-widget-handoff.md`.
 
 Ainda falta em A3:

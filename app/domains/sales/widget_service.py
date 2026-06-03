@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 from app.domains.sales.bot_service import SalesBotService
 
 WIDGET_PROVIDER = "web_widget"
-WIDGET_MESSAGE_LIMIT_PER_MINUTE = 20
-WIDGET_POLL_LIMIT_PER_MINUTE = 90
+WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE = 20
+WIDGET_MESSAGE_LIMIT_PER_WIDGET_PER_MINUTE = 120
+WIDGET_POLL_LIMIT_PER_IP_PER_MINUTE = 90
+WIDGET_POLL_LIMIT_PER_WIDGET_PER_MINUTE = 600
 
 
 class PublicWidgetService:
@@ -70,12 +72,13 @@ class PublicWidgetService:
         cleaned_message = self._required_string(message, "Mensagem vazia")[:4000]
         cleaned_name = self._optional_string(visitor_name) or f"Visitante {cleaned_visitor_id[:8]}"
 
-        self._enforce_rate_limit(
+        self._enforce_widget_rate_limits(
             tenant_id=tenant_id,
-            key=self._rate_limit_key(widget_id, cleaned_visitor_id, client_ip),
             action="widget.message",
-            limit=WIDGET_MESSAGE_LIMIT_PER_MINUTE,
-            metadata={"widget_id": widget_id},
+            widget_id=widget_id,
+            client_ip=client_ip,
+            ip_limit=WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE,
+            widget_limit=WIDGET_MESSAGE_LIMIT_PER_WIDGET_PER_MINUTE,
         )
 
         try:
@@ -175,12 +178,13 @@ class PublicWidgetService:
         channel_id = str(channel["id"])
         cleaned_visitor_id = self._required_string(visitor_id, "visitor_id obrigatorio")[:160]
 
-        self._enforce_rate_limit(
+        self._enforce_widget_rate_limits(
             tenant_id=tenant_id,
-            key=self._rate_limit_key(widget_id, cleaned_visitor_id, client_ip),
             action="widget.poll",
-            limit=WIDGET_POLL_LIMIT_PER_MINUTE,
-            metadata={"widget_id": widget_id},
+            widget_id=widget_id,
+            client_ip=client_ip,
+            ip_limit=WIDGET_POLL_LIMIT_PER_IP_PER_MINUTE,
+            widget_limit=WIDGET_POLL_LIMIT_PER_WIDGET_PER_MINUTE,
         )
 
         contact_id = self._contact_id_for_visitor(
@@ -313,6 +317,38 @@ class PublicWidgetService:
         if "*" in allowed_origins or origin in allowed_origins:
             return
         raise HTTPException(status_code=403, detail="Origem nao autorizada para este widget")
+
+    def _enforce_widget_rate_limits(
+        self,
+        *,
+        tenant_id: str,
+        action: str,
+        widget_id: str,
+        client_ip: str,
+        ip_limit: int,
+        widget_limit: int,
+    ) -> None:
+        self._enforce_rate_limit(
+            tenant_id=tenant_id,
+            key=self._rate_limit_ip_key(widget_id, client_ip),
+            action=f"{action}.ip",
+            limit=ip_limit,
+            metadata={
+                "widget_id": widget_id,
+                "scope": "ip",
+                "client_ip": client_ip,
+            },
+        )
+        self._enforce_rate_limit(
+            tenant_id=tenant_id,
+            key=self._rate_limit_widget_key(widget_id),
+            action=f"{action}.widget",
+            limit=widget_limit,
+            metadata={
+                "widget_id": widget_id,
+                "scope": "widget",
+            },
+        )
 
     def _enforce_rate_limit(
         self,
@@ -729,9 +765,14 @@ class PublicWidgetService:
         return f"web:{widget_id}:{visitor_id}"[:160]
 
     @staticmethod
-    def _rate_limit_key(widget_id: str, visitor_id: str, client_ip: str) -> str:
-        digest = hashlib.sha256(f"{widget_id}:{visitor_id}:{client_ip}".encode()).hexdigest()[:32]
-        return f"widget:{digest}"
+    def _rate_limit_ip_key(widget_id: str, client_ip: str) -> str:
+        digest = hashlib.sha256(f"{widget_id}:{client_ip}".encode()).hexdigest()[:32]
+        return f"widget:ip:{digest}"
+
+    @staticmethod
+    def _rate_limit_widget_key(widget_id: str) -> str:
+        digest = hashlib.sha256(widget_id.encode()).hexdigest()[:32]
+        return f"widget:global:{digest}"
 
     @staticmethod
     def _message_external_id(

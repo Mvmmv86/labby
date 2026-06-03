@@ -7,7 +7,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.domains.sales.bot_service import SalesBotService
-from app.domains.sales.widget_service import PublicWidgetService
+from app.domains.sales.widget_service import (
+    WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE,
+    PublicWidgetService,
+)
 from tests.test_sales_contacts_integration import TENANT_1, TENANT_2, current_one, current_two
 from tests.test_sales_contacts_integration import (
     db_session as _db_session_fixture,  # noqa: F401
@@ -177,6 +180,56 @@ def test_public_widget_rejects_origin_when_channel_has_allowlist(
             origin="https://evil.example",
         )
     assert exc.value.status_code == 403
+
+
+def test_public_widget_message_rate_limit_uses_ip_not_visitor_id(
+    db_session: Session,
+) -> None:
+    create_web_widget_channel(
+        db_session,
+        tenant_id=TENANT_1,
+        widget_id="labby_widget_rate_limit",
+    )
+    service = PublicWidgetService(db_session)
+
+    for index in range(WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE):
+        result = service.receive_message(
+            widget_id="labby_widget_rate_limit",
+            visitor_id=f"visitor-{index}",
+            visitor_name="Paula",
+            message=f"Mensagem {index}",
+            client_message_id=f"client-message-{index}",
+            client_ip="203.0.113.10",
+        )
+        assert result["status"] == "ok"
+
+    with pytest.raises(HTTPException) as exc:
+        service.receive_message(
+            widget_id="labby_widget_rate_limit",
+            visitor_id="visitor-rotated",
+            visitor_name="Paula",
+            message="Tentativa acima do limite",
+            client_message_id="client-message-over-limit",
+            client_ip="203.0.113.10",
+        )
+    assert exc.value.status_code == 429
+
+    blocked = db_session.execute(
+        text(
+            """
+            SELECT metadata_json
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'web_widget'
+              AND action = 'widget.message.ip'
+              AND outcome = 'blocked'
+            ORDER BY created_at DESC
+            LIMIT 1
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().one()
+    assert blocked["metadata_json"]["client_ip"] == "203.0.113.10"
 
 
 def create_web_widget_channel(

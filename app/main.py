@@ -5,6 +5,7 @@ from app.api.public_widget import router as public_widget_router
 from app.api.v2.labby.router import router as labby_router
 from app.core.config import get_settings
 from app.core.health import readiness_status
+from app.core.widget_cors import WidgetCORSMiddleware
 
 
 def create_app() -> FastAPI:
@@ -28,6 +29,7 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
     )
+    app.add_middleware(WidgetCORSMiddleware)
 
     @app.get("/health", tags=["health"])
     def root_health() -> dict[str, str]:

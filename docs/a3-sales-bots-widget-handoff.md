@@ -42,7 +42,11 @@ Data: 2026-06-03
   nunca define tenant/canal.
 - Widget so funciona para canal `web_chatbot` conectado e ativo.
 - `allowed_origins` no `config` do canal e respeitado quando configurado.
-- Rate limit auditavel via `rate_limit_events` para envio e polling do widget.
+- CORS dedicado em `/widget/*` permite embed cross-origin sem cookies ou
+  credenciais, mantendo o controle de origem na camada de aplicacao.
+- Rate limit auditavel via `rate_limit_events` para envio e polling do widget:
+  chave por IP confiavel e backstop por `widget_id`, sem depender de
+  `visitor_id` informado pelo cliente.
 - Mensagem publica usa provider `web_widget` e `external_id` deterministico com
   `client_message_id`, com `ON CONFLICT DO NOTHING`.
 - Reentrega da mesma mensagem do widget nao duplica contato, conversa, mensagem,
@@ -70,7 +74,7 @@ widget publico em chamada longa ou acoplamento externo.
 ## Validacao local
 
 - `ruff check .` passou.
-- `python -m pytest -q` passou com `110 passed, 5 skipped`.
+- `python -m pytest -q` passou com `112 passed, 5 skipped`.
 - `alembic upgrade head --sql` gerou SQL ate `009_sales_bots_widget_foundation`.
 - `contracts/labby-openapi.yaml` regenerado e validado com `yaml.safe_load`.
 

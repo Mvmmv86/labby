@@ -101,3 +101,48 @@ def test_public_widget_routes_are_available_without_auth() -> None:
     assert listed.status_code == 200
     assert listed.json()["messages"][0]["content"] == "Ola"
     assert service.list_payload["after"] == str(MESSAGE_ID)
+
+
+def test_public_widget_cors_allows_customer_origins_without_credentials() -> None:
+    client, service = make_client()
+
+    preflight = client.options(
+        f"/widget/{WIDGET_ID}/messages",
+        headers={
+            "Origin": "https://cliente.example",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type",
+        },
+    )
+    assert preflight.status_code == 204
+    assert preflight.headers["access-control-allow-origin"] == "https://cliente.example"
+    assert "POST" in preflight.headers["access-control-allow-methods"]
+    assert preflight.headers["access-control-allow-headers"] == "Content-Type"
+    assert "access-control-allow-credentials" not in preflight.headers
+
+    config = client.get(
+        f"/widget/{WIDGET_ID}/config",
+        headers={"Origin": "https://cliente.example"},
+    )
+    assert config.status_code == 200
+    assert config.headers["access-control-allow-origin"] == "https://cliente.example"
+    assert "access-control-allow-credentials" not in config.headers
+    assert service.config_payload["origin"] == "https://cliente.example"
+
+
+def test_public_widget_uses_trusted_forwarded_hop_for_client_ip() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/widget/{WIDGET_ID}/messages",
+        headers={"X-Forwarded-For": "198.51.100.44, 203.0.113.10"},
+        json={
+            "visitor_id": "visitor-1",
+            "visitor_name": "Paula",
+            "message": "Oi",
+            "client_message_id": "msg-1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert service.received_payload["client_ip"] == "203.0.113.10"
