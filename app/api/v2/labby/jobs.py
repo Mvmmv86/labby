@@ -4,7 +4,11 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.dependencies import CurrentMembership, get_current_membership
 from app.domains.jobs.job_service import JobQueueService
-from app.schemas.jobs import JobMetricsResponse, JobQueueMetricResponse
+from app.schemas.jobs import (
+    JobMetricsResponse,
+    JobQueueMetricResponse,
+    SalesOutboundStuckMetricResponse,
+)
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -24,6 +28,9 @@ def queue_metrics(
         raise HTTPException(status_code=403, detail="Permissao insuficiente")
 
     metrics = service.queue_metrics(tenant_id=str(current.tenant_id))
+    sales_outbound_stuck = service.sales_outbound_stuck_metrics(
+        tenant_id=str(current.tenant_id)
+    )
     return JobMetricsResponse(
         metrics=[
             JobQueueMetricResponse(
@@ -32,6 +39,13 @@ def queue_metrics(
                 count=metric.count,
             )
             for metric in metrics
-        ]
+        ],
+        sales_outbound_stuck=[
+            SalesOutboundStuckMetricResponse(
+                status=metric.status,
+                count=metric.count,
+                oldest_created_at=metric.oldest_created_at,
+            )
+            for metric in sales_outbound_stuck
+        ],
     )
-

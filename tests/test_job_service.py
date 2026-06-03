@@ -157,6 +157,29 @@ def test_queue_metrics_filters_by_tenant() -> None:
     ]
 
 
+def test_sales_outbound_stuck_metrics_filters_by_tenant() -> None:
+    oldest = datetime(2026, 6, 3, tzinfo=UTC)
+    db = FakeSession(
+        rows=[
+            {
+                "status": "sending",
+                "total": 2,
+                "oldest_created_at": oldest,
+            },
+        ]
+    )
+    service = JobQueueService(db)
+
+    metrics = service.sales_outbound_stuck_metrics(tenant_id="tenant-1")
+
+    sql, params = db.calls[0]
+    assert "status = 'sending'" in sql
+    assert params == {"tenant_id": "tenant-1"}
+    assert [(metric.status, metric.count, metric.oldest_created_at) for metric in metrics] == [
+        ("sending", 2, oldest),
+    ]
+
+
 def test_record_webhook_event_is_tenant_provider_idempotent() -> None:
     db = FakeSession(scalar="webhook-1")
     service = JobQueueService(db)

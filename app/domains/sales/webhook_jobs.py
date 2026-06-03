@@ -167,7 +167,11 @@ class SalesWebhookJobProcessor:
                 text(
                     """
                     UPDATE sales_messages
-                    SET status = :status
+                    SET status = CASE
+                            WHEN status = 'read' THEN status
+                            WHEN status = 'delivered' AND :status = 'sent' THEN status
+                            ELSE :status
+                        END
                     WHERE tenant_id = :tenant_id
                       AND (
                             (provider = 'evolution' AND external_id = :external_id)
@@ -176,6 +180,18 @@ class SalesWebhookJobProcessor:
                                 AND delivery_external_id = :external_id
                             )
                       )
+                      AND CASE status
+                            WHEN 'read' THEN 3
+                            WHEN 'delivered' THEN 2
+                            WHEN 'sent' THEN 1
+                            ELSE 0
+                          END
+                          < CASE :status
+                            WHEN 'read' THEN 3
+                            WHEN 'delivered' THEN 2
+                            WHEN 'sent' THEN 1
+                            ELSE 0
+                          END
                     """
                 ),
                 {"tenant_id": tenant_id, "external_id": external_id, "status": status},

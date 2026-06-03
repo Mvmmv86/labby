@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.api.v2.labby.jobs import get_job_queue_service
 from app.core.dependencies import CurrentMembership, get_current_membership
-from app.domains.jobs.job_service import QueueMetric
+from app.domains.jobs.job_service import QueueMetric, SalesOutboundStuckMetric
 from app.main import create_app
 
 
@@ -17,6 +17,16 @@ class FakeJobQueueService:
         return [
             QueueMetric(queue_name="worker-ai", status="pending", count=3),
             QueueMetric(queue_name="worker-email", status="dead_letter", count=1),
+        ]
+
+    def sales_outbound_stuck_metrics(self, *, tenant_id: str):
+        self.tenant_id = tenant_id
+        return [
+            SalesOutboundStuckMetric(
+                status="sending",
+                count=2,
+                oldest_created_at=None,
+            )
         ]
 
 
@@ -53,6 +63,9 @@ def test_jobs_metrics_are_tenant_scoped() -> None:
     assert response.json()["metrics"] == [
         {"queue_name": "worker-ai", "status": "pending", "count": 3},
         {"queue_name": "worker-email", "status": "dead_letter", "count": 1},
+    ]
+    assert response.json()["sales_outbound_stuck"] == [
+        {"status": "sending", "count": 2, "oldest_created_at": None}
     ]
 
 

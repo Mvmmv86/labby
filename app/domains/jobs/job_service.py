@@ -38,6 +38,13 @@ class QueueMetric:
     count: int
 
 
+@dataclass(frozen=True)
+class SalesOutboundStuckMetric:
+    status: str
+    count: int
+    oldest_created_at: datetime | None
+
+
 class JobQueueService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -296,6 +303,31 @@ class JobQueueService:
                 queue_name=row["queue_name"],
                 status=row["status"],
                 count=int(row["total"] or 0),
+            )
+            for row in rows
+        ]
+
+    def sales_outbound_stuck_metrics(self, *, tenant_id: str) -> list[SalesOutboundStuckMetric]:
+        rows = self.db.execute(
+            text(
+                """
+                SELECT status, COUNT(*) AS total, MIN(created_at) AS oldest_created_at
+                FROM sales_messages
+                WHERE tenant_id = :tenant_id
+                  AND direction = 'saida'
+                  AND status = 'sending'
+                  AND delivery_external_id IS NULL
+                GROUP BY status
+                ORDER BY status ASC
+                """
+            ),
+            {"tenant_id": tenant_id},
+        ).mappings().all()
+        return [
+            SalesOutboundStuckMetric(
+                status=row["status"],
+                count=int(row["total"] or 0),
+                oldest_created_at=row["oldest_created_at"],
             )
             for row in rows
         ]

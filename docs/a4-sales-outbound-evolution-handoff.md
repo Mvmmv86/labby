@@ -45,6 +45,10 @@ Inclui:
 - Webhook `messages.update` reconcilia status tanto por
   `provider/external_id` antigo quanto por
   `delivery_provider/delivery_external_id`.
+- A reconciliacao de status e monotônica: eventos atrasados de `sent` nao
+  regridem uma mensagem ja `delivered` ou `read`.
+- `GET /api/v2/labby/jobs/metrics` expõe `sales_outbound_stuck` para indicar
+  mensagens outbound presas em `sending` sem `delivery_external_id`.
 
 ## Evolution
 
@@ -76,12 +80,18 @@ Inclui:
   - worker chama Evolution uma unica vez;
   - reprocessamento nao reenvia;
   - mensagem grava `delivery_provider/delivery_external_id`;
-  - webhook de status reconcilia por id externo de delivery.
+  - webhook de status reconcilia por id externo de delivery;
+  - webhook de status nao regride `delivered` para `sent`;
+  - mensagem que ja estava em `sending` falha fechada sem chamar provider;
+  - erro do provider marca mensagem e attempt como `failed`;
+  - envio de campanha marca recipient/campaign como `sent`.
 - `tests/test_sales_webhooks_integration.py`
   - rate limit do webhook Evolution por canal;
   - secret invalido nao consome quota de canal.
 - `tests/test_sales_webhook_routes.py`
   - rota publica deriva IP confiavel do ultimo hop do `X-Forwarded-For`.
+- `tests/test_jobs_routes.py` e `tests/test_job_service.py`
+  - metricas de jobs incluem outbound `sending` preso por tenant.
 - `tests/test_sales_models.py`
   - tabela de attempts registrada;
   - unique parcial de delivery;
@@ -97,3 +107,7 @@ Inclui:
 - Retencao de `rate_limit_events` e `sales_message_dispatch_attempts` deve
   entrar em A5.
 - Observabilidade agregada por provider/fila ainda entra em A5.
+- Retry seguro com consulta/reconciliacao no provider antes de reenviar segue
+  como gate de A5/A6 para sair do modo fail-closed de MVP.
+- Rate limit em Redis/borda e politica de retencao de `rate_limit_events`
+  seguem como hardening de A5 para rotas publicas sob flood.

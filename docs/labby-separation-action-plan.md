@@ -604,12 +604,19 @@ Entregue localmente em 2026-06-03, fatia Outbound Evolution:
   externo do provider.
 - Reconciliacao de webhook `messages.update` tambem busca por
   `delivery_provider/delivery_external_id`.
+- Reconciliacao de status monotônica para nao regredir `read`/`delivered` por
+  evento atrasado do provider.
 - Campanha atualiza recipient para `sent` quando a mensagem e enviada pelo
   provider.
 - Rate limit do webhook publico Evolution por canal apos secret valido,
   evitando gargalo por IP unico do provider.
+- Metricas de jobs incluem outbound `sending` preso por tenant em
+  `sales_outbound_stuck`.
 - Testes de metadata, rota publica, rate limit de webhook e outbound
   idempotente.
+- Testes de caminhos de falha: mensagem ja em `sending` falha fechada sem
+  chamar provider, erro do provider marca mensagem/attempt como `failed` e
+  envio de campanha marca recipient/campaign como `sent`.
 - Documento `docs/a4-sales-outbound-evolution-handoff.md`.
 
 Ainda falta em A3:
@@ -617,6 +624,9 @@ Ainda falta em A3:
 - Webhooks Telegram, WhatsApp Cloud e Discord.
 - Bot com LLM real por job/adapter standalone, se entrar no MVP de producao.
 - Rate limit consolidado para webhooks publicos de providers futuros.
+- Retry seguro com reconciliacao/consulta no provider antes de reenviar
+  mensagens outbound.
+- Rate limit em Redis/borda e retencao de `rate_limit_events`.
 - Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone
