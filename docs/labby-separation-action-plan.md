@@ -536,6 +536,8 @@ Entregue localmente em 2026-06-02, fatia Campaigns:
   cancel, listagem de recipients e dispatch.
 - Recipients derivados de contatos ativos e sem `optout`, com dedupe por
   `tenant_id + campaign_id + contact_id`.
+- Targeting por filtros `filtro_tags`/`filtro_grupo` ainda nao foi transplantado;
+  esta fatia adiciona recipients por `contact_ids`/`contatos_ids`.
 - `start` ativa a campanha; dispatch HTTP exige campanha ativa e cria job
   idempotente `sales.campaign.dispatch` na fila `worker-sales-campaigns`.
 - Worker de campaigns cria mensagens de saida com status `pending` e provider

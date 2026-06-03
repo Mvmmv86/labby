@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
 
 ChannelType = Literal[
     "whatsapp_evolution",
@@ -357,8 +357,6 @@ class SalesCampaignCreateRequest(BaseModel):
 
 
 class SalesCampaignUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
     nome: str | None = Field(default=None, min_length=1, max_length=180)
     conteudo: str | None = Field(default=None, min_length=1)
     descricao: str | None = None

@@ -5675,7 +5675,6 @@ components:
             format: date-time
           - type: 'null'
           title: Agendado Para
-      additionalProperties: false
       type: object
       title: SalesCampaignUpdateRequest
     SalesCampaignsResponse:

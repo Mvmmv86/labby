@@ -281,16 +281,23 @@ def test_canonical_sales_campaign_routes_are_available() -> None:
     assert service.current.tenant_id == TENANT_ID
 
 
-def test_campaign_update_rejects_direct_status_change() -> None:
+def test_campaign_update_accepts_legacy_frontend_payload_extras() -> None:
     client, service = make_client()
 
     response = client.put(
         f"/api/v2/labby/campaigns/{CAMPAIGN_ID}",
-        json={"status": "queued"},
+        json={
+            "nome": "Promo Julho",
+            "media_url": "https://example.com/image.png",
+            "filtro_tags": ["vip"],
+            "filtro_grupo": "Leads",
+            "contatos_ids": [str(CONTACT_ID)],
+            "status": "queued",
+        },
     )
 
-    assert response.status_code == 422
-    assert service.updated_payload is None
+    assert response.status_code == 200
+    assert service.updated_payload["patch"] == {"nome": "Promo Julho"}
 
 
 def test_campaigns_router_requires_sales_module() -> None:
