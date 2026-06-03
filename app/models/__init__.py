@@ -2,6 +2,8 @@ from app.models.base import Base
 from app.models.identity import Membership, MembershipModule, TeamInvite, Tenant, User
 from app.models.jobs import Job, JobAttempt, OutboxEvent, RateLimitEvent, WebhookEvent
 from app.models.sales import (
+    SalesBot,
+    SalesBotRun,
     SalesCampaign,
     SalesCampaignRecipient,
     SalesChannel,
@@ -29,6 +31,8 @@ __all__ = [
     "MembershipModule",
     "OutboxEvent",
     "RateLimitEvent",
+    "SalesBot",
+    "SalesBotRun",
     "SalesCampaign",
     "SalesCampaignRecipient",
     "SalesChannel",

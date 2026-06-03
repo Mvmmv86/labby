@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.public_widget import router as public_widget_router
 from app.api.v2.labby.router import router as labby_router
 from app.core.config import get_settings
 from app.core.health import readiness_status
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
         }
 
     app.include_router(labby_router, prefix="/api/v2/labby")
+    app.include_router(public_widget_router)
     return app
 
 

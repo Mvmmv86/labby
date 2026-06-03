@@ -471,3 +471,127 @@ class SalesCampaignPreviewContact(BaseModel):
 class SalesCampaignPreviewResponse(BaseModel):
     contacts: list[SalesCampaignPreviewContact]
     total: int
+
+
+BotTriggerType = Literal["todas_mensagens", "primeira_mensagem", "keyword"]
+
+
+class SalesBotCreateRequest(BaseModel):
+    nome: str = Field(min_length=1, max_length=180)
+    descricao: str | None = None
+    system_prompt: str | None = None
+    welcome_message: str | None = None
+    fallback_message: str | None = None
+    base_conhecimento: str | None = None
+    faqs: list[dict[str, Any]] | None = None
+    modelo: str = Field(default="gpt-4o-mini", max_length=80)
+    temperatura: float = Field(default=0.3, ge=0, le=2)
+    max_tokens: int = Field(default=800, gt=0, le=8000)
+    tipo_trigger: BotTriggerType = "todas_mensagens"
+    trigger_valor: str | None = None
+    channel_ids: list[UUID] | None = Field(default=None, max_length=100)
+
+
+class SalesBotUpdateRequest(BaseModel):
+    nome: str | None = Field(default=None, min_length=1, max_length=180)
+    descricao: str | None = None
+    system_prompt: str | None = None
+    welcome_message: str | None = None
+    fallback_message: str | None = None
+    base_conhecimento: str | None = None
+    faqs: list[dict[str, Any]] | None = None
+    modelo: str | None = Field(default=None, max_length=80)
+    temperatura: float | None = Field(default=None, ge=0, le=2)
+    max_tokens: int | None = Field(default=None, gt=0, le=8000)
+    tipo_trigger: BotTriggerType | None = None
+    trigger_valor: str | None = None
+    channel_ids: list[UUID] | None = Field(default=None, max_length=100)
+    ativo: bool | None = None
+
+
+class SalesBotListItem(BaseModel):
+    id: UUID
+    nome: str
+    descricao: str | None = None
+    modelo: str
+    tipo_trigger: BotTriggerType
+    ativo: bool
+    total_acionamentos: int
+    total_concluidos: int
+    total_transferidos: int
+    channel_ids: list[UUID]
+    created_at: datetime
+
+
+class SalesBotDetail(SalesBotListItem):
+    system_prompt: str | None = None
+    welcome_message: str | None = None
+    fallback_message: str | None = None
+    base_conhecimento: str | None = None
+    faqs: list[dict[str, Any]]
+    temperatura: float
+    max_tokens: int
+    trigger_valor: str | None = None
+    criado_por: UUID | None = None
+    updated_at: datetime | None = None
+
+
+class SalesBotsResponse(BaseModel):
+    bots: list[SalesBotListItem]
+    total: int
+    page: int
+    per_page: int
+    pages: int
+
+
+class SalesBotToggleResponse(BaseModel):
+    id: UUID
+    nome: str
+    ativo: bool
+    message: str
+
+
+class SalesBotDeleteResponse(BaseModel):
+    id: UUID
+    message: str
+
+
+class WidgetConfigResponse(BaseModel):
+    widget_id: str
+    color: str
+    greeting: str
+    position: str
+    name: str
+    active: bool
+
+
+class WidgetMessageRequest(BaseModel):
+    visitor_id: str = Field(min_length=1, max_length=160)
+    visitor_name: str | None = Field(default=None, max_length=180)
+    message: str = Field(min_length=1, max_length=4000)
+    client_message_id: str | None = Field(default=None, max_length=180)
+    idempotency_key: str | None = Field(default=None, max_length=180)
+
+
+class WidgetMessageResponse(BaseModel):
+    status: str
+    conversa_id: UUID
+    conversation_id: UUID
+    message_id: UUID
+    duplicate: bool
+    bot_response: str | None = None
+    last_message_id: UUID
+
+
+class WidgetMessageItem(BaseModel):
+    id: UUID
+    content: str
+    direction: str
+    sender_type: str
+    created_at: datetime
+
+
+class WidgetMessagesResponse(BaseModel):
+    messages: list[WidgetMessageItem]
+    conversation_id: UUID | None = None
+    last_message_id: UUID | None = None

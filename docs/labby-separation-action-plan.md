@@ -548,13 +548,46 @@ Entregue localmente em 2026-06-02, fatia Campaigns:
   cross-tenant real e regressao de lifecycle webhook Evolution.
 - Documento `docs/a3-sales-campaigns-handoff.md`.
 
+Entregue localmente em 2026-06-03, fatia Bots/Widget publico:
+
+- Migration `009_sales_bots_widget_foundation`.
+- Tabelas `sales_bots` e `sales_bot_runs`.
+- Indice unico parcial para `sales_channels` de Web Chat por `widget_id`,
+  evitando ambiguidade publica entre tenants.
+- Endpoints flat `/api/v2/labby/bots/*` e canonicos
+  `/api/v2/labby/sales/bots/*`.
+- CRUD de bots, toggle e duplicate.
+- Campos legados preservados para o frontend: `nome`, `ativo`,
+  `tipo_trigger`, `trigger_valor`, `channel_ids`, `total_acionamentos`,
+  `total_concluidos` e `total_transferidos`.
+- Mutations de bot exigem modulo `sales` e role `owner/admin/agent`.
+- Widget publico em:
+  - `GET /widget/{widget_id}/loader.js`
+  - `GET /widget/{widget_id}/config`
+  - `POST /widget/{widget_id}/messages`
+  - `GET /widget/{widget_id}/messages`
+- Widget resolve `tenant_id`/`channel_id` pelo `widget_id`, sem confiar no
+  payload publico.
+- Widget exige canal `web_chatbot` conectado/ativo.
+- `allowed_origins` em `sales_channels.config` e respeitado quando configurado.
+- Rate limit auditavel para envio/polling via `rate_limit_events`.
+- Mensagens do widget usam provider `web_widget` e external id deterministico,
+  com `ON CONFLICT DO NOTHING`.
+- Reentrega da mesma mensagem do widget nao duplica contato, conversa,
+  mensagem, contador ou resposta de bot.
+- Runtime minimo de bot no widget com trigger, FAQ, welcome/fallback e
+  transferencia para humano, sem chamada externa longa no request publico.
+- OpenAPI regenerado em `contracts/labby-openapi.yaml`.
+- Testes de contrato flat/canonico para bots, contrato publico do widget,
+  metadata, widget idempotente, bot runtime e cross-tenant real no CI.
+- Documento `docs/a3-sales-bots-widget-handoff.md`.
+
 Ainda falta em A3:
 
 - Webhooks Telegram, WhatsApp Cloud e Discord.
 - Outbound dispatch real de mensagens `pending`.
-- Bots com prompts, regras e execucao.
-- Widget publico completo.
-- Rate limit por canal/provider.
+- Bot com LLM real por job/adapter standalone, se entrar no MVP de producao.
+- Rate limit consolidado por canal/provider para webhooks publicos.
 - Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone

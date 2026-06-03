@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func, text
@@ -89,6 +99,12 @@ class SalesChannel(Base):
         ),
         Index("ix_sales_channels_tenant_status", "tenant_id", "status"),
         Index("ix_sales_channels_tenant_type", "tenant_id", "channel_type"),
+        Index(
+            "uq_sales_channels_web_chatbot_widget_id",
+            text("(config->>'widget_id')"),
+            unique=True,
+            postgresql_where=text("channel_type = 'web_chatbot' AND config ? 'widget_id'"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -419,3 +435,123 @@ class SalesCampaignRecipient(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class SalesBot(Base):
+    __tablename__ = "sales_bots"
+    __table_args__ = (
+        CheckConstraint(
+            "trigger_type IN ('todas_mensagens', 'primeira_mensagem', 'keyword')",
+            name="ck_sales_bots_trigger_type",
+        ),
+        CheckConstraint(
+            "temperature >= 0 AND temperature <= 2",
+            name="ck_sales_bots_temperature_range",
+        ),
+        CheckConstraint(
+            "max_tokens > 0 AND max_tokens <= 8000",
+            name="ck_sales_bots_max_tokens_positive",
+        ),
+        CheckConstraint(
+            "total_triggers >= 0 "
+            "AND total_completed >= 0 "
+            "AND total_transferred >= 0",
+            name="ck_sales_bots_counts_non_negative",
+        ),
+        CheckConstraint("jsonb_typeof(faqs) = 'array'", name="ck_sales_bots_faqs_array"),
+        CheckConstraint(
+            "jsonb_typeof(channel_ids) = 'array'",
+            name="ck_sales_bots_channel_ids_array",
+        ),
+        Index("ix_sales_bots_tenant_active_created", "tenant_id", "active", "created_at"),
+        Index("ix_sales_bots_tenant_name", "tenant_id", "name"),
+        Index("ix_sales_bots_channel_ids_gin", "channel_ids", postgresql_using="gin"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(180), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    system_prompt: Mapped[str | None] = mapped_column(Text)
+    welcome_message: Mapped[str | None] = mapped_column(Text)
+    fallback_message: Mapped[str | None] = mapped_column(Text)
+    knowledge_base: Mapped[str | None] = mapped_column(Text)
+    faqs: Mapped[list] = mapped_column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+    model: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="gpt-4o-mini", server_default="gpt-4o-mini"
+    )
+    temperature: Mapped[float] = mapped_column(
+        Numeric(4, 2), nullable=False, default=0.3, server_default="0.30"
+    )
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, server_default="800")
+    trigger_type: Mapped[str] = mapped_column(
+        String(40),
+        nullable=False,
+        default="todas_mensagens",
+        server_default="todas_mensagens",
+    )
+    trigger_value: Mapped[str | None] = mapped_column(Text)
+    channel_ids: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    total_triggers: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_completed: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    total_transferred: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    updated_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SalesBotRun(Base):
+    __tablename__ = "sales_bot_runs"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending', 'succeeded', 'failed', 'skipped')",
+            name="ck_sales_bot_runs_status",
+        ),
+        Index("ix_sales_bot_runs_tenant_bot_created", "tenant_id", "bot_id", "created_at"),
+        Index("ix_sales_bot_runs_conversation", "conversation_id"),
+        Index("ix_sales_bot_runs_input_message", "input_message_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    bot_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_bots.id", ondelete="CASCADE"), nullable=False
+    )
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_conversations.id", ondelete="SET NULL")
+    )
+    input_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_messages.id", ondelete="SET NULL")
+    )
+    output_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_messages.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="pending", server_default="pending"
+    )
+    input_text: Mapped[str | None] = mapped_column(Text)
+    output_text: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    run_metadata: Mapped[dict] = mapped_column(
+        "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
