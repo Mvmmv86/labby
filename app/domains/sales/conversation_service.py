@@ -8,11 +8,14 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import CurrentMembership
+from app.domains.jobs.job_service import JobQueueService
+from app.domains.sales.outbound_service import enqueue_sales_message_dispatch
 
 
 class SalesConversationService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, *, job_queue: JobQueueService | None = None) -> None:
         self.db = db
+        self.job_queue = job_queue or JobQueueService(db)
 
     def list_conversations(
         self,
@@ -603,6 +606,13 @@ class SalesConversationService:
                 "contact_id": conversation["contact_id"],
                 "tenant_id": str(current.tenant_id),
             },
+        )
+        enqueue_sales_message_dispatch(
+            job_queue=self.job_queue,
+            tenant_id=str(current.tenant_id),
+            message_id=str(row["id"]),
+            membership_id=str(current.membership_id),
+            commit=False,
         )
         self.db.commit()
         return self._message_row(row)

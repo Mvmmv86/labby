@@ -13,6 +13,8 @@ from app.domains.jobs.job_service import JobQueueService
 SALES_EVOLUTION_WEBHOOK_JOB = "sales.webhook.evolution"
 SALES_WEBHOOK_QUEUE = "worker-sales-webhooks"
 EVOLUTION_CHANNEL_LIFECYCLE_EVENTS = {"connection.update", "qrcode.updated"}
+EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE = 120
+EVOLUTION_WEBHOOK_LIMIT_PER_CHANNEL_PER_MINUTE = 600
 
 SECRET_HEADER_NAMES = {
     "authorization",
@@ -34,6 +36,7 @@ class SalesWebhookReceiver:
         channel_id: str,
         payload: dict[str, Any],
         headers: dict[str, str],
+        client_ip: str = "unknown",
     ) -> dict[str, Any]:
         channel = self._get_public_channel(channel_id)
         if channel is None:
@@ -42,6 +45,11 @@ class SalesWebhookReceiver:
         if channel["channel_type"] != "whatsapp_evolution":
             raise HTTPException(status_code=404, detail="Canal Evolution nao encontrado")
 
+        self._enforce_webhook_rate_limits(
+            tenant_id=str(channel["tenant_id"]),
+            channel_id=channel_id,
+            client_ip=client_ip,
+        )
         self._validate_secret(
             expected=str(channel["webhook_secret"] or ""),
             headers=headers,
@@ -215,6 +223,93 @@ class SalesWebhookReceiver:
             is not None
         )
 
+    def _enforce_webhook_rate_limits(
+        self,
+        *,
+        tenant_id: str,
+        channel_id: str,
+        client_ip: str,
+    ) -> None:
+        self._enforce_rate_limit(
+            tenant_id=tenant_id,
+            key=_rate_limit_key("ip", channel_id, client_ip),
+            action="webhook.evolution.ip",
+            limit=EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE,
+            metadata={
+                "channel_id": channel_id,
+                "client_ip": client_ip,
+                "scope": "ip",
+            },
+        )
+        self._enforce_rate_limit(
+            tenant_id=tenant_id,
+            key=_rate_limit_key("channel", channel_id, ""),
+            action="webhook.evolution.channel",
+            limit=EVOLUTION_WEBHOOK_LIMIT_PER_CHANNEL_PER_MINUTE,
+            metadata={
+                "channel_id": channel_id,
+                "scope": "channel",
+            },
+        )
+
+    def _enforce_rate_limit(
+        self,
+        *,
+        tenant_id: str,
+        key: str,
+        action: str,
+        limit: int,
+        metadata: dict[str, Any],
+    ) -> None:
+        current_count = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM rate_limit_events
+                WHERE tenant_id = :tenant_id
+                  AND provider = 'evolution'
+                  AND rate_limit_key = :rate_limit_key
+                  AND action = :action
+                  AND outcome = 'allowed'
+                  AND created_at >= NOW() - INTERVAL '60 seconds'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "rate_limit_key": key,
+                "action": action,
+            },
+        ).scalar_one()
+        outcome = "blocked" if int(current_count or 0) >= limit else "allowed"
+        self.db.execute(
+            text(
+                """
+                INSERT INTO rate_limit_events (
+                    tenant_id, provider, rate_limit_key, action, outcome,
+                    retry_after, metadata_json
+                )
+                VALUES (
+                    :tenant_id, 'evolution', :rate_limit_key, :action, :outcome,
+                    CASE WHEN :outcome = 'blocked'
+                        THEN NOW() + INTERVAL '60 seconds'
+                        ELSE NULL
+                    END,
+                    CAST(:metadata AS jsonb)
+                )
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "rate_limit_key": key,
+                "action": action,
+                "outcome": outcome,
+                "metadata": json.dumps(metadata, ensure_ascii=False),
+            },
+        )
+        self.db.commit()
+        if outcome == "blocked":
+            raise HTTPException(status_code=429, detail="Limite de webhook excedido")
+
     @staticmethod
     def _validate_secret(*, expected: str, headers: dict[str, str]) -> None:
         expected = str(expected or "").strip()
@@ -280,3 +375,8 @@ def _event_idempotency_key(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()[:32]
     return f"evolution:{channel_id}:{event_type}:{payload_hash}"
+
+
+def _rate_limit_key(scope: str, channel_id: str, client_ip: str) -> str:
+    digest = hashlib.sha256(f"{scope}:{channel_id}:{client_ip}".encode()).hexdigest()
+    return f"evolution:webhook:{scope}:{digest[:32]}"

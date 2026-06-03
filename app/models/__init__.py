@@ -11,6 +11,7 @@ from app.models.sales import (
     SalesContactChannel,
     SalesConversation,
     SalesMessage,
+    SalesMessageDispatchAttempt,
 )
 from app.models.social_news import (
     SocialNewsCurator,
@@ -40,6 +41,7 @@ __all__ = [
     "SalesContactChannel",
     "SalesConversation",
     "SalesMessage",
+    "SalesMessageDispatchAttempt",
     "SocialNewsCurator",
     "SocialNewsDispatch",
     "SocialNewsItem",

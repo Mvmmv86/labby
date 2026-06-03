@@ -70,6 +70,10 @@ Analytics flat e canonico:
   persistido como `ignored` e nenhum job e criado.
 - Handler do job cria/atualiza contato, vinculo de canal, conversa e mensagem,
   com dedupe por `tenant_id + provider + external_id`.
+- Webhook `messages.update` reconcilia status de mensagens enviadas por
+  `delivery_provider + delivery_external_id`.
+- Webhook publico Evolution tem rate limit auditavel por IP confiavel e
+  backstop por canal.
 - Analytics usa apenas tabelas ja existentes. `campanhas_ativas` fica `0` ate
   a migration de campanhas entrar.
 
@@ -116,7 +120,7 @@ esta configurado. Localmente ficam pulados se a env nao existir.
 ## Fora desta fatia
 
 - Webhooks Telegram, WhatsApp Cloud e Discord.
-- Outbound dispatch real de mensagens `pending`.
+- Outbound real para providers alem de Evolution.
 - Campaigns com recipients e jobs de disparo.
 - Bots com prompts, regras e execucao.
 - Widget publico completo:
@@ -124,5 +128,5 @@ esta configurado. Localmente ficam pulados se a env nao existir.
   - `GET /widget/{widget_id}/config`
   - `POST /widget/{widget_id}/messages`
   - `GET /widget/{widget_id}/messages`
-- Rate limit por canal/provider.
+- Rate limit para webhooks de providers futuros.
 - Audit log de mutations criticas.

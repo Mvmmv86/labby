@@ -243,11 +243,18 @@ class SalesMessage(Base):
             name="ck_sales_messages_message_type",
         ),
         CheckConstraint(
-            "status IN ('pending', 'sent', 'delivered', 'read', 'failed')",
+            "status IN ('pending', 'sending', 'sent', 'delivered', 'read', 'failed')",
             name="ck_sales_messages_status",
         ),
         Index("ix_sales_messages_conversation_created", "conversation_id", "created_at"),
         Index("ix_sales_messages_tenant_created", "tenant_id", "created_at"),
+        Index(
+            "ix_sales_messages_tenant_outbound_pending",
+            "tenant_id",
+            "status",
+            "created_at",
+            postgresql_where=text("direction = 'saida' AND status IN ('pending', 'sending')"),
+        ),
         Index(
             "uq_sales_messages_tenant_provider_external",
             "tenant_id",
@@ -255,6 +262,16 @@ class SalesMessage(Base):
             "external_id",
             unique=True,
             postgresql_where=text("provider IS NOT NULL AND external_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_sales_messages_tenant_delivery_external",
+            "tenant_id",
+            "delivery_provider",
+            "delivery_external_id",
+            unique=True,
+            postgresql_where=text(
+                "delivery_provider IS NOT NULL AND delivery_external_id IS NOT NULL"
+            ),
         ),
     )
 
@@ -283,6 +300,8 @@ class SalesMessage(Base):
     media_caption: Mapped[str | None] = mapped_column(Text)
     provider: Mapped[str | None] = mapped_column(String(40))
     external_id: Mapped[str | None] = mapped_column(String(255))
+    delivery_provider: Mapped[str | None] = mapped_column(String(40))
+    delivery_external_id: Mapped[str | None] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending", server_default="pending"
     )
@@ -290,6 +309,59 @@ class SalesMessage(Base):
     message_metadata: Mapped[dict] = mapped_column(
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SalesMessageDispatchAttempt(Base):
+    __tablename__ = "sales_message_dispatch_attempts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('sending', 'sent', 'failed', 'skipped')",
+            name="ck_sales_message_dispatch_attempts_status",
+        ),
+        Index(
+            "uq_sales_message_dispatch_attempts_tenant_provider_key",
+            "tenant_id",
+            "provider",
+            "idempotency_key",
+            unique=True,
+        ),
+        Index("ix_sales_message_dispatch_attempts_message", "message_id"),
+        Index(
+            "ix_sales_message_dispatch_attempts_tenant_status_created",
+            "tenant_id",
+            "status",
+            "created_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_messages.id", ondelete="CASCADE"), nullable=False
+    )
+    channel_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sales_channels.id", ondelete="SET NULL")
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False)
+    provider_external_id: Mapped[str | None] = mapped_column(String(255))
+    request_payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    response_payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(120))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

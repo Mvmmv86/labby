@@ -17,6 +17,7 @@ celery_app.conf.update(
         "app.jobs.smoke",
         "app.jobs.runner",
         "app.domains.sales.campaign_jobs",
+        "app.domains.sales.outbound_jobs",
         "app.domains.sales.webhook_jobs",
         "app.domains.social_media.news_jobs",
     ),

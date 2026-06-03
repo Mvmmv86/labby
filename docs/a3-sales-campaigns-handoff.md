@@ -47,9 +47,9 @@ Campaigns flat e canonico:
   restritas a `start`, `dispatch` e `cancel`. Para manter paridade com o
   modal legado do frontend, o schema publico de update ignora extras como
   `media_url`, `filtro_tags`, `filtro_grupo` e `contatos_ids`.
-- O worker cria mensagens de saida com status `pending` e provider
-  `labby_campaign`; o envio externo real continua deferido para a fatia de
-  outbound dispatch.
+- O worker cria mensagens de saida com status `pending`, provider
+  `labby_campaign` e enfileira `sales.message.dispatch`. O envio externo real
+  via Evolution foi entregue na fatia de outbound.
 - Dedupe do worker usa `sales_messages(tenant_id, provider, external_id)`.
 - Reprocessar o mesmo job nao duplica mensagens, conversas ou side effects de
   contador.
@@ -93,10 +93,10 @@ esta configurado. Localmente ficam pulados se a env nao existir.
 
 ## Fora desta fatia
 
-- Outbound dispatch real de mensagens `pending`.
+- Outbound real para providers alem de Evolution.
 - Scheduler de campanhas `scheduled`.
 - Targeting por `filtro_tags` e `filtro_grupo`. Nesta fatia, recipients sao
   adicionados por `contact_ids`/`contatos_ids`.
-- Rate limit por canal/provider.
+- Rate limit para providers futuros.
 - Audit log de mutations criticas.
 - Relatorio detalhado de bounces/entregas por provider.

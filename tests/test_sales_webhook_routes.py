@@ -14,10 +14,12 @@ class FakeSalesWebhookReceiver:
     def __init__(self) -> None:
         self.payload = None
         self.headers = None
+        self.client_ip = None
 
     def receive_evolution(self, **kwargs):
         self.payload = kwargs["payload"]
         self.headers = kwargs["headers"]
+        self.client_ip = kwargs["client_ip"]
         return {
             "status": "queued",
             "webhook_event_id": EVENT_ID,
@@ -44,10 +46,15 @@ def test_evolution_webhook_is_public_and_queues_event() -> None:
             "event": "messages.upsert",
             "data": {"key": {"id": "wa-1", "remoteJid": "5511999990000@s.whatsapp.net"}},
         },
-        headers={"X-Labby-Webhook-Secret": "secret"},
+        headers={
+            "X-Labby-Webhook-Secret": "secret",
+            "X-Forwarded-For": "198.51.100.44, 203.0.113.10",
+        },
     )
 
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
     assert receiver.payload["event"] == "messages.upsert"
     assert receiver.headers["x-labby-webhook-secret"] == "secret"
+    assert receiver.headers["x-forwarded-for"] == "198.51.100.44, 203.0.113.10"
+    assert receiver.client_ip == "203.0.113.10"

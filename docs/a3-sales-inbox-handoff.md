@@ -42,9 +42,10 @@ Canonicamente tambem servidas em:
 - IDs novos seguem UUID, consistente com `sales_contacts`.
 - `assigned_to_membership_id` e `sender_membership_id` usam `membership_id`,
   nao `user_id`, para manter ator humano tenant-scoped.
-- `send_message` persiste a mensagem de saida e atualiza conversa/contato, mas
-  deixa status `pending`. Envio externo por Evolution/WhatsApp Cloud/Telegram
-  fica para a fatia de canais/webhooks/jobs.
+- `send_message` persiste a mensagem de saida, atualiza conversa/contato e
+  enfileira `sales.message.dispatch` quando a mensagem nasce `pending`.
+  Evolution foi entregue na fatia de outbound; demais providers seguem
+  pendentes.
 - `auth/me` e respostas de auth agora retornam `canais_conectados` e `canais`
   calculados a partir de `sales_channels`, para a tela de Inbox habilitar quando
   houver canal conectado.
@@ -90,5 +91,5 @@ esta configurado. Localmente ficam pulados se a env nao existir.
 
 - CRUD completo de channels.
 - Webhooks Evolution/Telegram/WhatsApp Cloud/Discord.
-- Job real de envio externo de mensagens.
+- Outbound real para WhatsApp Cloud/Telegram/Discord.
 - Campaigns, bots, webchat/widget e analytics.

@@ -462,7 +462,8 @@ Entregue localmente em 2026-06-02:
   `atendente_id`, paginacao e agregacao em lote de ultima mensagem e nao-lidas.
 - Resumo de notificacoes `conversations/notifications/summary`.
 - Detalhe de conversa, listagem cursor-based de mensagens, `mark-read`,
-  `close` e envio interno de mensagem de saida com status `pending`.
+  `close` e envio interno de mensagem de saida com status `pending`, depois
+  enfileirada para outbound real via `sales.message.dispatch`.
 - Contacts agora retorna `total_conversas`, `canais_vinculados`,
   `canais` e `conversas_recentes` usando agregacoes em lote, sem voltar aos
   subqueries por linha do OmniiaFlow antigo.
@@ -541,7 +542,8 @@ Entregue localmente em 2026-06-02, fatia Campaigns:
 - `start` ativa a campanha; dispatch HTTP exige campanha ativa e cria job
   idempotente `sales.campaign.dispatch` na fila `worker-sales-campaigns`.
 - Worker de campaigns cria mensagens de saida com status `pending` e provider
-  `labby_campaign`, sem depender ainda de envio externo real.
+  `labby_campaign`; o envio externo real via Evolution e feito por job
+  `sales.message.dispatch`.
 - Reprocessamento do mesmo job nao duplica mensagem, conversa nem contadores.
 - OpenAPI regenerado em `contracts/labby-openapi.yaml`.
 - Testes de contrato flat/canonico, metadata, dispatch idempotente,
@@ -587,12 +589,34 @@ Entregue localmente em 2026-06-03, fatia Bots/Widget publico:
   idempotente, bot runtime e cross-tenant real no CI.
 - Documento `docs/a3-sales-bots-widget-handoff.md`.
 
+Entregue localmente em 2026-06-03, fatia Outbound Evolution:
+
+- Migration `010_sales_outbound_dispatch`.
+- `sales_messages` ganhou `delivery_provider`, `delivery_external_id`,
+  `dispatched_at` e status intermediario `sending`.
+- Tabela `sales_message_dispatch_attempts`.
+- Inbox manual e campaigns enfileiram job idempotente
+  `sales.message.dispatch` na fila `worker-sales-outbound` quando uma mensagem
+  de saida `pending` nasce.
+- Adapter Evolution outbound standalone usando `LABBY_EVOLUTION_API_*`.
+- Worker de outbound envia `text`/midia para Evolution, grava
+  `delivery_provider/delivery_external_id` e nao reenvia se a mensagem ja tem id
+  externo do provider.
+- Reconciliacao de webhook `messages.update` tambem busca por
+  `delivery_provider/delivery_external_id`.
+- Campanha atualiza recipient para `sent` quando a mensagem e enviada pelo
+  provider.
+- Rate limit do webhook publico Evolution por IP confiavel e backstop por
+  canal, gravado em `rate_limit_events` antes da validacao de secret.
+- Testes de metadata, rota publica, rate limit de webhook e outbound
+  idempotente.
+- Documento `docs/a4-sales-outbound-evolution-handoff.md`.
+
 Ainda falta em A3:
 
 - Webhooks Telegram, WhatsApp Cloud e Discord.
-- Outbound dispatch real de mensagens `pending`.
 - Bot com LLM real por job/adapter standalone, se entrar no MVP de producao.
-- Rate limit consolidado por canal/provider para webhooks publicos.
+- Rate limit consolidado para webhooks publicos de providers futuros.
 - Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone

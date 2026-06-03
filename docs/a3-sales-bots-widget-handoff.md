@@ -80,10 +80,10 @@ widget publico em chamada longa ou acoplamento externo.
 
 ## Pendencias conscientes
 
-- Envio outbound real das mensagens `pending` ainda nao foi implementado.
+- Outbound real para providers alem de Evolution ainda nao foi implementado.
 - Webhooks inbound de Telegram, WhatsApp Cloud e Discord seguem bloqueados em
   `connect` ate os receivers existirem.
 - Bot com LLM real deve virar job/adapter standalone antes de producao completa.
 - Audit log de mutations criticas ainda esta pendente.
-- Rate limit por provider/canal para todos os webhooks deve ser consolidado em
-  A5 antes do A6.
+- Rate limit para webhooks de providers futuros deve ser consolidado em A5
+  antes do A6.

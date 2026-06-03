@@ -9,7 +9,11 @@ from sqlalchemy.orm import Session
 from app.domains.jobs.registry import JobExecutionContext, job_handlers
 from app.domains.sales.channel_service import SalesChannelService
 from app.domains.sales.webhook_jobs import SalesWebhookJobProcessor
-from app.domains.sales.webhook_service import SALES_EVOLUTION_WEBHOOK_JOB, SalesWebhookReceiver
+from app.domains.sales.webhook_service import (
+    EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE,
+    SALES_EVOLUTION_WEBHOOK_JOB,
+    SalesWebhookReceiver,
+)
 from tests.test_sales_contacts_integration import TENANT_1, current_one
 from tests.test_sales_contacts_integration import (
     db_session as _db_session_fixture,  # noqa: F401
@@ -246,6 +250,53 @@ def test_evolution_webhook_rejects_wrong_secret(db_session: Session) -> None:
         )
 
     assert exc.value.status_code == 401
+
+
+def test_evolution_webhook_rate_limit_uses_client_ip_backstop(db_session: Session) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    db_session.execute(
+        text("UPDATE sales_channels SET status = 'conectado' WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    )
+    db_session.commit()
+    receiver = SalesWebhookReceiver(db_session)
+    payload = {
+        "event": "messages.upsert",
+        "data": {
+            "key": {
+                "id": "wa-rate-limit",
+                "remoteJid": "5511999990000@s.whatsapp.net",
+                "fromMe": False,
+            },
+            "message": {"conversation": "Oi"},
+        },
+    }
+
+    for _ in range(EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE):
+        response = receiver.receive_evolution(
+            channel_id=str(channel["id"]),
+            payload=payload,
+            headers={"x-labby-webhook-secret": secret},
+            client_ip="203.0.113.10",
+        )
+        assert response["status"] == "queued"
+
+    with pytest.raises(HTTPException) as exc:
+        receiver.receive_evolution(
+            channel_id=str(channel["id"]),
+            payload=payload,
+            headers={"x-labby-webhook-secret": secret},
+            client_ip="203.0.113.10",
+        )
+    assert exc.value.status_code == 429
 
 
 def test_non_evolution_external_connect_is_gated_until_inbound_exists(

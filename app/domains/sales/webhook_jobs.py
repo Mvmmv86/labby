@@ -169,8 +169,13 @@ class SalesWebhookJobProcessor:
                     UPDATE sales_messages
                     SET status = :status
                     WHERE tenant_id = :tenant_id
-                      AND provider = 'evolution'
-                      AND external_id = :external_id
+                      AND (
+                            (provider = 'evolution' AND external_id = :external_id)
+                            OR (
+                                delivery_provider = 'evolution'
+                                AND delivery_external_id = :external_id
+                            )
+                      )
                     """
                 ),
                 {"tenant_id": tenant_id, "external_id": external_id, "status": status},

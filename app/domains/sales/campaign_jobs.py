@@ -5,8 +5,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal
+from app.domains.jobs.job_service import JobQueueService
 from app.domains.jobs.registry import JobExecutionContext, PermanentJobError, job_handlers
 from app.domains.sales.campaign_service import SALES_CAMPAIGN_DISPATCH_JOB
+from app.domains.sales.outbound_service import enqueue_sales_message_dispatch
 
 
 @job_handlers.register(SALES_CAMPAIGN_DISPATCH_JOB)
@@ -16,8 +18,9 @@ def dispatch_sales_campaign(context: JobExecutionContext) -> dict[str, Any]:
 
 
 class SalesCampaignJobProcessor:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, *, job_queue: JobQueueService | None = None) -> None:
         self.db = db
+        self.job_queue = job_queue or JobQueueService(db)
 
     def dispatch(self, context: JobExecutionContext) -> dict[str, Any]:
         campaign_id = str(context.payload.get("campaign_id") or "")
@@ -195,6 +198,15 @@ class SalesCampaignJobProcessor:
             .first()
         )
         if inserted:
+            enqueue_sales_message_dispatch(
+                job_queue=self.job_queue,
+                tenant_id=tenant_id,
+                message_id=str(inserted["id"]),
+                membership_id=str(campaign["created_by_membership_id"])
+                if campaign["created_by_membership_id"]
+                else None,
+                commit=False,
+            )
             self._mark_message_side_effects(
                 tenant_id=tenant_id,
                 recipient_id=str(recipient["id"]),
@@ -229,6 +241,16 @@ class SalesCampaignJobProcessor:
             conversation_id=conversation_id,
             message_id=str(existing_message["id"]) if existing_message else None,
         )
+        if existing_message:
+            enqueue_sales_message_dispatch(
+                job_queue=self.job_queue,
+                tenant_id=tenant_id,
+                message_id=str(existing_message["id"]),
+                membership_id=str(campaign["created_by_membership_id"])
+                if campaign["created_by_membership_id"]
+                else None,
+                commit=False,
+            )
         return False
 
     def _find_or_create_conversation(

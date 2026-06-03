@@ -13,6 +13,7 @@ def test_sales_metadata_tables_are_registered() -> None:
         "sales_contact_channels",
         "sales_contacts",
         "sales_conversations",
+        "sales_message_dispatch_attempts",
         "sales_messages",
     }.issubset(Base.metadata.tables)
 
@@ -73,6 +74,32 @@ def test_sales_messages_external_id_is_unique_per_tenant_provider() -> None:
         index.name == "uq_sales_messages_tenant_provider_external"
         and index.unique
         and [column.name for column in index.columns] == ["tenant_id", "provider", "external_id"]
+        for index in indexes
+    )
+
+
+def test_sales_messages_delivery_external_id_is_unique_per_tenant_provider() -> None:
+    table = Base.metadata.tables["sales_messages"]
+    indexes = [index for index in table.indexes if isinstance(index, Index)]
+
+    assert any(
+        index.name == "uq_sales_messages_tenant_delivery_external"
+        and index.unique
+        and [column.name for column in index.columns]
+        == ["tenant_id", "delivery_provider", "delivery_external_id"]
+        for index in indexes
+    )
+
+
+def test_sales_message_dispatch_attempts_are_idempotent_per_provider_key() -> None:
+    table = Base.metadata.tables["sales_message_dispatch_attempts"]
+    indexes = [index for index in table.indexes if isinstance(index, Index)]
+
+    assert any(
+        index.name == "uq_sales_message_dispatch_attempts_tenant_provider_key"
+        and index.unique
+        and [column.name for column in index.columns]
+        == ["tenant_id", "provider", "idempotency_key"]
         for index in indexes
     )
 
