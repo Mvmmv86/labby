@@ -72,8 +72,9 @@ Analytics flat e canonico:
   com dedupe por `tenant_id + provider + external_id`.
 - Webhook `messages.update` reconcilia status de mensagens enviadas por
   `delivery_provider + delivery_external_id`.
-- Webhook publico Evolution tem rate limit auditavel por IP confiavel e
-  backstop por canal.
+- Webhook publico Evolution tem rate limit auditavel por canal apos validar
+  secret. Nao ha gargalo por IP, porque o provider pode entregar todo o
+  trafego legitimo por uma unica origem.
 - Analytics usa apenas tabelas ja existentes. `campanhas_ativas` fica `0` ate
   a migration de campanhas entrar.
 

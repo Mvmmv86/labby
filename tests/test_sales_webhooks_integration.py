@@ -6,11 +6,11 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+import app.domains.sales.webhook_service as webhook_service_module
 from app.domains.jobs.registry import JobExecutionContext, job_handlers
 from app.domains.sales.channel_service import SalesChannelService
 from app.domains.sales.webhook_jobs import SalesWebhookJobProcessor
 from app.domains.sales.webhook_service import (
-    EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE,
     SALES_EVOLUTION_WEBHOOK_JOB,
     SalesWebhookReceiver,
 )
@@ -252,7 +252,15 @@ def test_evolution_webhook_rejects_wrong_secret(db_session: Session) -> None:
     assert exc.value.status_code == 401
 
 
-def test_evolution_webhook_rate_limit_uses_client_ip_backstop(db_session: Session) -> None:
+def test_evolution_webhook_rate_limit_uses_channel_backstop(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        webhook_service_module,
+        "EVOLUTION_WEBHOOK_LIMIT_PER_CHANNEL_PER_MINUTE",
+        3,
+    )
     channel = SalesChannelService(db_session).create_channel(
         current=current_one(),
         tipo="whatsapp_evolution",
@@ -280,7 +288,7 @@ def test_evolution_webhook_rate_limit_uses_client_ip_backstop(db_session: Sessio
         },
     }
 
-    for _ in range(EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE):
+    for _ in range(3):
         response = receiver.receive_evolution(
             channel_id=str(channel["id"]),
             payload=payload,
@@ -297,6 +305,38 @@ def test_evolution_webhook_rate_limit_uses_client_ip_backstop(db_session: Sessio
             client_ip="203.0.113.10",
         )
     assert exc.value.status_code == 429
+
+
+def test_evolution_webhook_wrong_secret_does_not_consume_channel_rate_limit(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        SalesWebhookReceiver(db_session).receive_evolution(
+            channel_id=str(channel["id"]),
+            payload={"event": "messages.upsert"},
+            headers={"x-labby-webhook-secret": "wrong"},
+            client_ip="203.0.113.10",
+        )
+
+    assert exc.value.status_code == 401
+    assert db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'evolution'
+              AND action = 'webhook.evolution.channel'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one() == 0
 
 
 def test_non_evolution_external_connect_is_gated_until_inbound_exists(

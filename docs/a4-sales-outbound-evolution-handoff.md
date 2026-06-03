@@ -60,14 +60,13 @@ Inclui:
 ## Rate Limit do Webhook Evolution
 
 - O endpoint publico agora passa IP confiavel pelo ultimo hop de
-  `X-Forwarded-For`, com fallback `X-Real-IP`.
-- O receiver aplica dois limites:
-  - por `channel_id + client_ip`;
-  - backstop por `channel_id`.
-- Eventos de rate limit sao gravados antes da validacao do secret, entao spam
-  com secret invalido tambem entra no freio.
-- O segredo continua sendo validado por comparacao constante antes de qualquer
+  `X-Forwarded-For`, com fallback `X-Real-IP`, para auditoria.
+- O receiver valida o segredo por comparacao constante antes de qualquer
   evento/job de dominio.
+- Depois do secret valido, aplica cap auditavel por `channel_id`.
+- Nao ha limite por IP no Evolution webhook, porque o provider pode entregar
+  todo o trafego legitimo por uma unica origem e um gargalo por IP perderia
+  mensagens inbound.
 
 ## Testes adicionados
 
@@ -79,7 +78,8 @@ Inclui:
   - mensagem grava `delivery_provider/delivery_external_id`;
   - webhook de status reconcilia por id externo de delivery.
 - `tests/test_sales_webhooks_integration.py`
-  - rate limit do webhook Evolution por IP.
+  - rate limit do webhook Evolution por canal;
+  - secret invalido nao consome quota de canal.
 - `tests/test_sales_webhook_routes.py`
   - rota publica deriva IP confiavel do ultimo hop do `X-Forwarded-For`.
 - `tests/test_sales_models.py`

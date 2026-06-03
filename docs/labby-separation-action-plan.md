@@ -606,8 +606,8 @@ Entregue localmente em 2026-06-03, fatia Outbound Evolution:
   `delivery_provider/delivery_external_id`.
 - Campanha atualiza recipient para `sent` quando a mensagem e enviada pelo
   provider.
-- Rate limit do webhook publico Evolution por IP confiavel e backstop por
-  canal, gravado em `rate_limit_events` antes da validacao de secret.
+- Rate limit do webhook publico Evolution por canal apos secret valido,
+  evitando gargalo por IP unico do provider.
 - Testes de metadata, rota publica, rate limit de webhook e outbound
   idempotente.
 - Documento `docs/a4-sales-outbound-evolution-handoff.md`.

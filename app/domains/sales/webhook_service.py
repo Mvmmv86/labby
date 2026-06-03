@@ -13,7 +13,6 @@ from app.domains.jobs.job_service import JobQueueService
 SALES_EVOLUTION_WEBHOOK_JOB = "sales.webhook.evolution"
 SALES_WEBHOOK_QUEUE = "worker-sales-webhooks"
 EVOLUTION_CHANNEL_LIFECYCLE_EVENTS = {"connection.update", "qrcode.updated"}
-EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE = 120
 EVOLUTION_WEBHOOK_LIMIT_PER_CHANNEL_PER_MINUTE = 600
 
 SECRET_HEADER_NAMES = {
@@ -45,14 +44,14 @@ class SalesWebhookReceiver:
         if channel["channel_type"] != "whatsapp_evolution":
             raise HTTPException(status_code=404, detail="Canal Evolution nao encontrado")
 
-        self._enforce_webhook_rate_limits(
-            tenant_id=str(channel["tenant_id"]),
-            channel_id=channel_id,
-            client_ip=client_ip,
-        )
         self._validate_secret(
             expected=str(channel["webhook_secret"] or ""),
             headers=headers,
+        )
+        self._enforce_webhook_rate_limit(
+            tenant_id=str(channel["tenant_id"]),
+            channel_id=channel_id,
+            client_ip=client_ip,
         )
 
         event_type = _normalize_event_type(payload.get("event") or "unknown")
@@ -223,7 +222,7 @@ class SalesWebhookReceiver:
             is not None
         )
 
-    def _enforce_webhook_rate_limits(
+    def _enforce_webhook_rate_limit(
         self,
         *,
         tenant_id: str,
@@ -232,22 +231,12 @@ class SalesWebhookReceiver:
     ) -> None:
         self._enforce_rate_limit(
             tenant_id=tenant_id,
-            key=_rate_limit_key("ip", channel_id, client_ip),
-            action="webhook.evolution.ip",
-            limit=EVOLUTION_WEBHOOK_LIMIT_PER_IP_PER_MINUTE,
-            metadata={
-                "channel_id": channel_id,
-                "client_ip": client_ip,
-                "scope": "ip",
-            },
-        )
-        self._enforce_rate_limit(
-            tenant_id=tenant_id,
-            key=_rate_limit_key("channel", channel_id, ""),
+            key=_rate_limit_key("channel", channel_id),
             action="webhook.evolution.channel",
             limit=EVOLUTION_WEBHOOK_LIMIT_PER_CHANNEL_PER_MINUTE,
             metadata={
                 "channel_id": channel_id,
+                "client_ip": client_ip,
                 "scope": "channel",
             },
         )
@@ -377,6 +366,6 @@ def _event_idempotency_key(
     return f"evolution:{channel_id}:{event_type}:{payload_hash}"
 
 
-def _rate_limit_key(scope: str, channel_id: str, client_ip: str) -> str:
-    digest = hashlib.sha256(f"{scope}:{channel_id}:{client_ip}".encode()).hexdigest()
+def _rate_limit_key(scope: str, channel_id: str) -> str:
+    digest = hashlib.sha256(f"{scope}:{channel_id}".encode()).hexdigest()
     return f"evolution:webhook:{scope}:{digest[:32]}"
