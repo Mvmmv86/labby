@@ -6,7 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.rate_limit import RateLimitDecision
+from app.core.rate_limit import RateLimitDecision, RateLimitUnavailable
 from app.domains.sales.bot_service import SalesBotService
 from app.domains.sales.widget_service import (
     WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE,
@@ -24,12 +24,15 @@ pytestmark = pytest.mark.integration
 
 
 class FakeRateLimiter:
-    def __init__(self, *, allowed: bool = True) -> None:
+    def __init__(self, *, allowed: bool = True, unavailable: bool = False) -> None:
         self.allowed = allowed
+        self.unavailable = unavailable
         self.calls: list[dict] = []
 
     def check(self, **kwargs) -> RateLimitDecision:
         self.calls.append(kwargs)
+        if self.unavailable:
+            raise RateLimitUnavailable("down")
         return RateLimitDecision(
             allowed=self.allowed,
             current=1 if self.allowed else kwargs["limit"] + 1,
@@ -317,6 +320,42 @@ def test_public_widget_redis_rate_limit_records_blocked_event(
     ).mappings().one()
     assert blocked["outcome"] == "blocked"
     assert blocked["metadata_json"]["backend"] == "redis"
+
+
+def test_public_widget_redis_outage_fails_closed_without_database_fallback(
+    db_session: Session,
+) -> None:
+    create_web_widget_channel(
+        db_session,
+        tenant_id=TENANT_1,
+        widget_id="labby_widget_redis_outage",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        PublicWidgetService(
+            db_session,
+            rate_limiter=FakeRateLimiter(unavailable=True),
+        ).receive_message(
+            widget_id="labby_widget_redis_outage",
+            visitor_id="visitor-redis",
+            visitor_name="Paula",
+            message="Ola",
+            client_message_id="client-redis-outage",
+            client_ip="203.0.113.10",
+        )
+
+    assert exc.value.status_code == 503
+    assert db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'web_widget'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one() == 0
 
 
 def create_web_widget_channel(

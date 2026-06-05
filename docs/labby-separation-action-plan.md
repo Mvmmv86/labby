@@ -694,10 +694,16 @@ Entregue localmente em 2026-06-05, fatia Rate Limit/Retention:
 
 - `LABBY_PUBLIC_RATE_LIMIT_BACKEND` com backend `database` para dev/fallback e
   `redis` obrigatorio em staging/producao.
-- Rate limiter Redis de janela fixa para rotas publicas.
+- Rate limiter Redis de janela fixa para rotas publicas, com Lua script
+  atomico para `INCR` + `EXPIRE` + `TTL`.
+- Cliente Redis singleton por processo para evitar novo pool/conexao por
+  request publico.
 - Widget publico e webhook Evolution usam Redis quando configurado; requests
   permitidos nao gravam `rate_limit_events`.
 - Bloqueios continuam auditaveis em `rate_limit_events`.
+- Webhook Evolution degrada para rate limit por DB quando Redis esta
+  indisponivel, evitando perda de inbound durante outage curto.
+- Widget publico segue fail-closed com `503` quando Redis esta indisponivel.
 - Cleanup operacional de `rate_limit_events` antigos e
   `sales_message_dispatch_attempts` finalizados antigos.
 - Task Celery `labby.jobs.cleanup_operational_history`, agendada no beat.

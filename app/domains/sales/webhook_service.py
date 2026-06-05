@@ -272,29 +272,32 @@ class SalesWebhookReceiver:
                     limit=limit,
                     window_seconds=60,
                 )
-            except RateLimitUnavailable as exc:
-                raise HTTPException(
-                    status_code=503,
-                    detail="Rate limit indisponivel",
-                ) from exc
-            if decision.allowed:
-                return
-
-            self.job_queue.record_rate_limit_event(
-                tenant_id=tenant_id,
-                provider="evolution",
-                rate_limit_key=key,
-                action=action,
-                outcome="blocked",
-                retry_after=datetime.now(UTC)
-                + timedelta(seconds=decision.retry_after_seconds),
-                metadata={
+            except RateLimitUnavailable:
+                decision = None
+                metadata = {
                     **metadata,
-                    "backend": "redis",
-                    "current": decision.current,
-                },
-            )
-            raise HTTPException(status_code=429, detail="Limite de webhook excedido")
+                    "backend": "database_fallback",
+                }
+            if decision is None:
+                pass
+            elif decision.allowed:
+                return
+            else:
+                self.job_queue.record_rate_limit_event(
+                    tenant_id=tenant_id,
+                    provider="evolution",
+                    rate_limit_key=key,
+                    action=action,
+                    outcome="blocked",
+                    retry_after=datetime.now(UTC)
+                    + timedelta(seconds=decision.retry_after_seconds),
+                    metadata={
+                        **metadata,
+                        "backend": "redis",
+                        "current": decision.current,
+                    },
+                )
+                raise HTTPException(status_code=429, detail="Limite de webhook excedido")
 
         current_count = self.db.execute(
             text(

@@ -7,7 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import app.domains.sales.webhook_service as webhook_service_module
-from app.core.rate_limit import RateLimitDecision
+from app.core.rate_limit import RateLimitDecision, RateLimitUnavailable
 from app.domains.jobs.registry import JobExecutionContext, job_handlers
 from app.domains.sales.channel_service import SalesChannelService
 from app.domains.sales.webhook_jobs import SalesWebhookJobProcessor
@@ -27,12 +27,15 @@ pytestmark = pytest.mark.integration
 
 
 class FakeRateLimiter:
-    def __init__(self, *, allowed: bool = True) -> None:
+    def __init__(self, *, allowed: bool = True, unavailable: bool = False) -> None:
         self.allowed = allowed
+        self.unavailable = unavailable
         self.calls: list[dict] = []
 
     def check(self, **kwargs) -> RateLimitDecision:
         self.calls.append(kwargs)
+        if self.unavailable:
+            raise RateLimitUnavailable("down")
         return RateLimitDecision(
             allowed=self.allowed,
             current=1 if self.allowed else kwargs["limit"] + 1,
@@ -458,6 +461,60 @@ def test_evolution_webhook_redis_rate_limit_records_blocked_event(
     ).mappings().one()
     assert blocked["outcome"] == "blocked"
     assert blocked["metadata_json"]["backend"] == "redis"
+
+
+def test_evolution_webhook_redis_outage_falls_back_to_database_rate_limit(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    db_session.execute(
+        text("UPDATE sales_channels SET status = 'conectado' WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    )
+    db_session.commit()
+    limiter = FakeRateLimiter(unavailable=True)
+
+    response = SalesWebhookReceiver(db_session, rate_limiter=limiter).receive_evolution(
+        channel_id=str(channel["id"]),
+        payload={
+            "event": "messages.upsert",
+            "data": {
+                "key": {
+                    "id": "wa-redis-outage",
+                    "remoteJid": "5511999990000@s.whatsapp.net",
+                    "fromMe": False,
+                },
+                "message": {"conversation": "Oi"},
+            },
+        },
+        headers={"x-labby-webhook-secret": secret},
+        client_ip="203.0.113.10",
+    )
+
+    assert response["status"] == "queued"
+    assert len(limiter.calls) == 1
+    event = db_session.execute(
+        text(
+            """
+            SELECT outcome, metadata_json
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'evolution'
+              AND action = 'webhook.evolution.channel'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().one()
+    assert event["outcome"] == "allowed"
+    assert event["metadata_json"]["backend"] == "database_fallback"
 
 
 def test_non_evolution_external_connect_is_gated_until_inbound_exists(

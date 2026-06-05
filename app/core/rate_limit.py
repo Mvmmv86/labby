@@ -30,6 +30,15 @@ class PublicRateLimiter(Protocol):
 
 
 class RedisFixedWindowRateLimiter:
+    _LUA_SCRIPT = """
+    local current = redis.call('INCR', KEYS[1])
+    if current == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    local ttl = redis.call('TTL', KEYS[1])
+    return {current, ttl}
+    """
+
     def __init__(self, redis_client: Redis | None = None) -> None:
         self.redis = redis_client or make_redis_client()
 
@@ -42,10 +51,15 @@ class RedisFixedWindowRateLimiter:
     ) -> RateLimitDecision:
         redis_key = f"labby:rate-limit:{key}"
         try:
-            current = int(self.redis.incr(redis_key))
-            if current == 1:
-                self.redis.expire(redis_key, window_seconds)
-            ttl = int(self.redis.ttl(redis_key))
+            current, ttl = [
+                int(value)
+                for value in self.redis.eval(
+                    self._LUA_SCRIPT,
+                    1,
+                    redis_key,
+                    int(window_seconds),
+                )
+            ]
         except RedisError as exc:
             raise RateLimitUnavailable("Redis rate limiter unavailable") from exc
 
