@@ -45,9 +45,9 @@ Inclui:
 - Webhook `messages.update` reconcilia status tanto por
   `provider/external_id` antigo quanto por
   `delivery_provider/delivery_external_id`.
-- A reconciliacao de status e monotônica: eventos atrasados de `sent` nao
+- A reconciliacao de status e monotonica: eventos atrasados de `sent` nao
   regridem uma mensagem ja `delivered` ou `read`.
-- `GET /api/v2/labby/jobs/metrics` expõe `sales_outbound_stuck` para indicar
+- `GET /api/v2/labby/jobs/metrics` expoe `sales_outbound_stuck` para indicar
   mensagens outbound presas em `sending` sem `delivery_external_id`.
 
 ## Evolution
@@ -104,10 +104,7 @@ Inclui:
 - Outbound real para Telegram, WhatsApp Cloud e Discord ainda nao foi
   implementado.
 - Targeting de campanha por `filtro_tags`/`filtro_grupo` segue deferido.
-- Retencao de `rate_limit_events` e `sales_message_dispatch_attempts` deve
-  entrar em A5.
 - Observabilidade agregada por provider/fila ainda entra em A5.
 - Retry seguro com consulta/reconciliacao no provider antes de reenviar segue
   como gate de A5/A6 para sair do modo fail-closed de MVP.
-- Rate limit em Redis/borda e politica de retencao de `rate_limit_events`
-  seguem como hardening de A5 para rotas publicas sob flood.
+- Rate limit em Redis/borda e politica de retencao entram no handoff de A5.

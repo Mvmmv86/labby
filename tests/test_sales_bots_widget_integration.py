@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import RateLimitDecision
 from app.domains.sales.bot_service import SalesBotService
 from app.domains.sales.widget_service import (
     WIDGET_MESSAGE_LIMIT_PER_IP_PER_MINUTE,
@@ -20,6 +21,20 @@ from tests.test_sales_contacts_integration import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+class FakeRateLimiter:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[dict] = []
+
+    def check(self, **kwargs) -> RateLimitDecision:
+        self.calls.append(kwargs)
+        return RateLimitDecision(
+            allowed=self.allowed,
+            current=1 if self.allowed else kwargs["limit"] + 1,
+            retry_after_seconds=60,
+        )
 
 
 def test_sales_bot_crud_and_cross_tenant_scope_hit_real_postgres(
@@ -230,6 +245,78 @@ def test_public_widget_message_rate_limit_uses_ip_not_visitor_id(
         {"tenant_id": TENANT_1},
     ).mappings().one()
     assert blocked["metadata_json"]["client_ip"] == "203.0.113.10"
+
+
+def test_public_widget_redis_rate_limit_does_not_write_allowed_events(
+    db_session: Session,
+) -> None:
+    create_web_widget_channel(
+        db_session,
+        tenant_id=TENANT_1,
+        widget_id="labby_widget_redis_allowed",
+    )
+    limiter = FakeRateLimiter(allowed=True)
+
+    result = PublicWidgetService(db_session, rate_limiter=limiter).receive_message(
+        widget_id="labby_widget_redis_allowed",
+        visitor_id="visitor-redis",
+        visitor_name="Paula",
+        message="Ola",
+        client_message_id="client-redis-1",
+        client_ip="203.0.113.10",
+    )
+
+    assert result["status"] == "ok"
+    assert len(limiter.calls) == 2
+    assert db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'web_widget'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one() == 0
+
+
+def test_public_widget_redis_rate_limit_records_blocked_event(
+    db_session: Session,
+) -> None:
+    create_web_widget_channel(
+        db_session,
+        tenant_id=TENANT_1,
+        widget_id="labby_widget_redis_blocked",
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        PublicWidgetService(
+            db_session,
+            rate_limiter=FakeRateLimiter(allowed=False),
+        ).receive_message(
+            widget_id="labby_widget_redis_blocked",
+            visitor_id="visitor-redis",
+            visitor_name="Paula",
+            message="Ola",
+            client_message_id="client-redis-2",
+            client_ip="203.0.113.10",
+        )
+
+    assert exc.value.status_code == 429
+    blocked = db_session.execute(
+        text(
+            """
+            SELECT outcome, metadata_json
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'web_widget'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().one()
+    assert blocked["outcome"] == "blocked"
+    assert blocked["metadata_json"]["backend"] == "redis"
 
 
 def create_web_widget_channel(

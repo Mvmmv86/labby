@@ -45,6 +45,12 @@ class SalesOutboundStuckMetric:
     oldest_created_at: datetime | None
 
 
+@dataclass(frozen=True)
+class OperationalHistoryCleanupResult:
+    rate_limit_events_deleted: int
+    dispatch_attempts_deleted: int
+
+
 class JobQueueService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -394,6 +400,62 @@ class JobQueueService:
             )
         self.db.commit()
         return jobs
+
+    def cleanup_operational_history(
+        self,
+        *,
+        rate_limit_retention_days: int,
+        dispatch_attempt_retention_days: int,
+        limit: int = 1000,
+    ) -> OperationalHistoryCleanupResult:
+        bounded_limit = max(1, limit)
+        rate_limit_deleted = self.db.execute(
+            text(
+                """
+                WITH old_events AS (
+                  SELECT id
+                  FROM rate_limit_events
+                  WHERE created_at < NOW() - (:retention_days * INTERVAL '1 day')
+                  ORDER BY created_at ASC
+                  LIMIT :limit
+                )
+                DELETE FROM rate_limit_events
+                WHERE id IN (SELECT id FROM old_events)
+                RETURNING id
+                """
+            ),
+            {
+                "retention_days": max(1, rate_limit_retention_days),
+                "limit": bounded_limit,
+            },
+        ).all()
+        dispatch_attempts_deleted = self.db.execute(
+            text(
+                """
+                WITH old_attempts AS (
+                  SELECT id
+                  FROM sales_message_dispatch_attempts
+                  WHERE status IN ('sent', 'failed', 'skipped')
+                    AND COALESCE(finished_at, created_at)
+                        < NOW() - (:retention_days * INTERVAL '1 day')
+                  ORDER BY COALESCE(finished_at, created_at) ASC
+                  LIMIT :limit
+                )
+                DELETE FROM sales_message_dispatch_attempts
+                WHERE id IN (SELECT id FROM old_attempts)
+                RETURNING id
+                """
+            ),
+            {
+                "retention_days": max(1, dispatch_attempt_retention_days),
+                "limit": bounded_limit,
+            },
+        ).all()
+        self.db.commit()
+        return OperationalHistoryCleanupResult(
+            rate_limit_events_deleted=len(rate_limit_deleted),
+            dispatch_attempts_deleted=len(dispatch_attempts_deleted),
+        )
 
     def enqueue_outbox_event(
         self,

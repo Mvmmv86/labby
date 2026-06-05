@@ -25,7 +25,12 @@ celery_app.conf.update(
     task_time_limit=60 * 15,
     task_soft_time_limit=60 * 10,
     worker_prefetch_multiplier=1,
-    beat_schedule={},
+    beat_schedule={
+        "cleanup-operational-history": {
+            "task": "labby.jobs.cleanup_operational_history",
+            "schedule": settings.operational_history_cleanup_interval_seconds,
+        },
+    },
 )
 
 celery_app.autodiscover_tasks(["app.jobs"])

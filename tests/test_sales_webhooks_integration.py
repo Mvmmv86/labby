@@ -7,6 +7,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 import app.domains.sales.webhook_service as webhook_service_module
+from app.core.rate_limit import RateLimitDecision
 from app.domains.jobs.registry import JobExecutionContext, job_handlers
 from app.domains.sales.channel_service import SalesChannelService
 from app.domains.sales.webhook_jobs import SalesWebhookJobProcessor
@@ -23,6 +24,20 @@ from tests.test_sales_contacts_integration import (
 )
 
 pytestmark = pytest.mark.integration
+
+
+class FakeRateLimiter:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[dict] = []
+
+    def check(self, **kwargs) -> RateLimitDecision:
+        self.calls.append(kwargs)
+        return RateLimitDecision(
+            allowed=self.allowed,
+            current=1 if self.allowed else kwargs["limit"] + 1,
+            retry_after_seconds=60,
+        )
 
 
 def test_sales_evolution_webhook_handler_is_registered() -> None:
@@ -337,6 +352,112 @@ def test_evolution_webhook_wrong_secret_does_not_consume_channel_rate_limit(
         ),
         {"tenant_id": TENANT_1},
     ).scalar_one() == 0
+
+
+def test_evolution_webhook_redis_rate_limit_does_not_write_allowed_events(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    db_session.execute(
+        text("UPDATE sales_channels SET status = 'conectado' WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    )
+    db_session.commit()
+    limiter = FakeRateLimiter(allowed=True)
+
+    response = SalesWebhookReceiver(db_session, rate_limiter=limiter).receive_evolution(
+        channel_id=str(channel["id"]),
+        payload={
+            "event": "messages.upsert",
+            "data": {
+                "key": {
+                    "id": "wa-redis-allowed",
+                    "remoteJid": "5511999990000@s.whatsapp.net",
+                    "fromMe": False,
+                },
+                "message": {"conversation": "Oi"},
+            },
+        },
+        headers={"x-labby-webhook-secret": secret},
+        client_ip="203.0.113.10",
+    )
+
+    assert response["status"] == "queued"
+    assert len(limiter.calls) == 1
+    assert db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'evolution'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one() == 0
+
+
+def test_evolution_webhook_redis_rate_limit_records_blocked_event(
+    db_session: Session,
+) -> None:
+    channel = SalesChannelService(db_session).create_channel(
+        current=current_one(),
+        tipo="whatsapp_evolution",
+        nome="WhatsApp",
+    )
+    secret = db_session.execute(
+        text("SELECT webhook_secret FROM sales_channels WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    ).scalar_one()
+    db_session.execute(
+        text("UPDATE sales_channels SET status = 'conectado' WHERE id = :channel_id"),
+        {"channel_id": channel["id"]},
+    )
+    db_session.commit()
+
+    with pytest.raises(HTTPException) as exc:
+        SalesWebhookReceiver(
+            db_session,
+            rate_limiter=FakeRateLimiter(allowed=False),
+        ).receive_evolution(
+            channel_id=str(channel["id"]),
+            payload={
+                "event": "messages.upsert",
+                "data": {
+                    "key": {
+                        "id": "wa-redis-blocked",
+                        "remoteJid": "5511999990000@s.whatsapp.net",
+                        "fromMe": False,
+                    },
+                    "message": {"conversation": "Oi"},
+                },
+            },
+            headers={"x-labby-webhook-secret": secret},
+            client_ip="203.0.113.10",
+        )
+
+    assert exc.value.status_code == 429
+    blocked = db_session.execute(
+        text(
+            """
+            SELECT outcome, metadata_json
+            FROM rate_limit_events
+            WHERE tenant_id = :tenant_id
+              AND provider = 'evolution'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().one()
+    assert blocked["outcome"] == "blocked"
+    assert blocked["metadata_json"]["backend"] == "redis"
 
 
 def test_non_evolution_external_connect_is_gated_until_inbound_exists(

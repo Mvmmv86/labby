@@ -16,6 +16,7 @@ valores reais.
 - `LABBY_ALLOWED_ORIGINS`
 - `LABBY_APP_BASE_URL`
 - `LABBY_TIMEZONE`
+- `LABBY_PUBLIC_RATE_LIMIT_BACKEND=redis`
 
 Regras:
 
@@ -43,6 +44,10 @@ Regras:
 
 - `LABBY_JOB_RUNNING_TIMEOUT_SECONDS`
 - `LABBY_JOB_REAPER_BATCH_SIZE`
+- `LABBY_RATE_LIMIT_EVENTS_RETENTION_DAYS`
+- `LABBY_SALES_DISPATCH_ATTEMPT_RETENTION_DAYS`
+- `LABBY_OPERATIONAL_HISTORY_CLEANUP_BATCH_SIZE`
+- `LABBY_OPERATIONAL_HISTORY_CLEANUP_INTERVAL_SECONDS`
 
 Regras:
 
@@ -50,6 +55,22 @@ Regras:
   considerado travado e volta para retry ou dead-letter.
 - O reaper roda junto do dispatch de jobs e evita jobs presos depois de queda de
   worker.
+- Em staging/producao, rate limit publico precisa usar Redis para evitar que
+  rotas publicas gravem uma linha no Postgres por request permitido.
+- `labby.jobs.cleanup_operational_history` deve rodar de forma recorrente para
+  limpar eventos de rate limit antigos e attempts de dispatch finalizados.
+
+## Sales / Evolution
+
+- `LABBY_EVOLUTION_API_URL`
+- `LABBY_EVOLUTION_API_KEY`
+- `LABBY_EVOLUTION_API_TIMEOUT_SECONDS`
+
+Regras:
+
+- Secrets de webhook de canais Evolution sao gerados por canal e nao devem ser
+  configurados manualmente em ambiente.
+- Evolution outbound usa jobs; request HTTP nao espera envio real terminar.
 
 ## Email
 

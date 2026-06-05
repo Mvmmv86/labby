@@ -180,6 +180,28 @@ def test_sales_outbound_stuck_metrics_filters_by_tenant() -> None:
     ]
 
 
+def test_cleanup_operational_history_deletes_only_bounded_old_rows() -> None:
+    db = FakeSession(rows=[{"id": "row-1"}, {"id": "row-2"}])
+    service = JobQueueService(db)
+
+    result = service.cleanup_operational_history(
+        rate_limit_retention_days=14,
+        dispatch_attempt_retention_days=90,
+        limit=500,
+    )
+
+    rate_sql, rate_params = db.calls[0]
+    attempts_sql, attempts_params = db.calls[1]
+    assert "DELETE FROM rate_limit_events" in rate_sql
+    assert "DELETE FROM sales_message_dispatch_attempts" in attempts_sql
+    assert "status IN ('sent', 'failed', 'skipped')" in attempts_sql
+    assert rate_params == {"retention_days": 14, "limit": 500}
+    assert attempts_params == {"retention_days": 90, "limit": 500}
+    assert result.rate_limit_events_deleted == 2
+    assert result.dispatch_attempts_deleted == 2
+    assert db.commits == 1
+
+
 def test_record_webhook_event_is_tenant_provider_idempotent() -> None:
     db = FakeSession(scalar="webhook-1")
     service = JobQueueService(db)

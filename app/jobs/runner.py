@@ -124,6 +124,21 @@ def dispatch_due_jobs(
         )
 
 
+@celery_app.task(name="labby.jobs.cleanup_operational_history")
+def cleanup_operational_history() -> dict[str, int]:
+    settings = get_settings()
+    with SessionLocal() as db:
+        result = JobQueueService(db).cleanup_operational_history(
+            rate_limit_retention_days=settings.rate_limit_events_retention_days,
+            dispatch_attempt_retention_days=settings.sales_dispatch_attempt_retention_days,
+            limit=settings.operational_history_cleanup_batch_size,
+        )
+    return {
+        "rate_limit_events_deleted": result.rate_limit_events_deleted,
+        "dispatch_attempts_deleted": result.dispatch_attempts_deleted,
+    }
+
+
 def _execution_context(job: JobRecord) -> JobExecutionContext:
     return JobExecutionContext(
         job_id=job.id,

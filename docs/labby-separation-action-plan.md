@@ -626,7 +626,6 @@ Ainda falta em A3:
 - Rate limit consolidado para webhooks publicos de providers futuros.
 - Retry seguro com reconciliacao/consulta no provider antes de reenviar
   mensagens outbound.
-- Rate limit em Redis/borda e retencao de `rate_limit_events`.
 - Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone
@@ -654,6 +653,8 @@ Gate:
 - Jobs registram erro e retry.
 
 ### A5 - Observabilidade e load test
+
+Status: iniciado localmente.
 
 Objetivo: validar a separacao antes do cutover.
 
@@ -688,6 +689,33 @@ Gate:
 - Sem vazamento cross-tenant.
 - Sem N+1 nas listagens principais.
 - Limite de conexoes DB dimensionado.
+
+Entregue localmente em 2026-06-05, fatia Rate Limit/Retention:
+
+- `LABBY_PUBLIC_RATE_LIMIT_BACKEND` com backend `database` para dev/fallback e
+  `redis` obrigatorio em staging/producao.
+- Rate limiter Redis de janela fixa para rotas publicas.
+- Widget publico e webhook Evolution usam Redis quando configurado; requests
+  permitidos nao gravam `rate_limit_events`.
+- Bloqueios continuam auditaveis em `rate_limit_events`.
+- Cleanup operacional de `rate_limit_events` antigos e
+  `sales_message_dispatch_attempts` finalizados antigos.
+- Task Celery `labby.jobs.cleanup_operational_history`, agendada no beat.
+- Configuracoes de retencao:
+  - `LABBY_RATE_LIMIT_EVENTS_RETENTION_DAYS`
+  - `LABBY_SALES_DISPATCH_ATTEMPT_RETENTION_DAYS`
+  - `LABBY_OPERATIONAL_HISTORY_CLEANUP_BATCH_SIZE`
+  - `LABBY_OPERATIONAL_HISTORY_CLEANUP_INTERVAL_SECONDS`
+- Documento `docs/a5-observability-loadtest-handoff.md`.
+
+Ainda falta em A5:
+
+- Retry seguro de outbound com consulta/reconciliacao no provider antes de
+  reenviar.
+- Alertas reais para `sales_outbound_stuck`, filas paradas, jobs falhos e rate
+  limit bloqueado.
+- Metricas de request latency/error rate, DB pool usage e Redis latency.
+- Load test 500 usuarios/50 tenants.
 
 ### A6 - Cutover Labby 100%
 

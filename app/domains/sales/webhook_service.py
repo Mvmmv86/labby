@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -8,6 +9,12 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
+from app.core.rate_limit import (
+    PublicRateLimiter,
+    RateLimitUnavailable,
+    RedisFixedWindowRateLimiter,
+)
 from app.domains.jobs.job_service import JobQueueService
 
 SALES_EVOLUTION_WEBHOOK_JOB = "sales.webhook.evolution"
@@ -25,9 +32,16 @@ SECRET_HEADER_NAMES = {
 
 
 class SalesWebhookReceiver:
-    def __init__(self, db: Session, *, job_queue: JobQueueService | None = None) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        job_queue: JobQueueService | None = None,
+        rate_limiter: PublicRateLimiter | None = None,
+    ) -> None:
         self.db = db
         self.job_queue = job_queue or JobQueueService(db)
+        self.rate_limiter = rate_limiter
 
     def receive_evolution(
         self,
@@ -250,6 +264,38 @@ class SalesWebhookReceiver:
         limit: int,
         metadata: dict[str, Any],
     ) -> None:
+        rate_limiter = self._public_rate_limiter()
+        if rate_limiter is not None:
+            try:
+                decision = rate_limiter.check(
+                    key=f"evolution:{action}:{key}",
+                    limit=limit,
+                    window_seconds=60,
+                )
+            except RateLimitUnavailable as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Rate limit indisponivel",
+                ) from exc
+            if decision.allowed:
+                return
+
+            self.job_queue.record_rate_limit_event(
+                tenant_id=tenant_id,
+                provider="evolution",
+                rate_limit_key=key,
+                action=action,
+                outcome="blocked",
+                retry_after=datetime.now(UTC)
+                + timedelta(seconds=decision.retry_after_seconds),
+                metadata={
+                    **metadata,
+                    "backend": "redis",
+                    "current": decision.current,
+                },
+            )
+            raise HTTPException(status_code=429, detail="Limite de webhook excedido")
+
         current_count = self.db.execute(
             text(
                 """
@@ -298,6 +344,14 @@ class SalesWebhookReceiver:
         self.db.commit()
         if outcome == "blocked":
             raise HTTPException(status_code=429, detail="Limite de webhook excedido")
+
+    def _public_rate_limiter(self) -> PublicRateLimiter | None:
+        if self.rate_limiter is not None:
+            return self.rate_limiter
+        if get_settings().public_rate_limit_backend == "redis":
+            self.rate_limiter = RedisFixedWindowRateLimiter()
+            return self.rate_limiter
+        return None
 
     @staticmethod
     def _validate_secret(*, expected: str, headers: dict[str, str]) -> None:

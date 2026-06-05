@@ -1,5 +1,5 @@
 from functools import lru_cache
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     ai_output_cost_per_million_tokens: float = 0.0
     job_running_timeout_seconds: int = 900
     job_reaper_batch_size: int = 50
+    public_rate_limit_backend: Literal["database", "redis"] = "database"
+    rate_limit_events_retention_days: int = 14
+    sales_dispatch_attempt_retention_days: int = 90
+    operational_history_cleanup_batch_size: int = 1000
+    operational_history_cleanup_interval_seconds: int = 3600
     social_news_capture_lookback_hours: int = 24
     social_news_max_source_requests_per_run: int = 10
     social_news_posts_per_source: int = 20
@@ -81,6 +86,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "LABBY_DATABASE_URL and LABBY_REDIS_URL must point to managed services "
                 "outside development."
+            )
+
+        if self.public_rate_limit_backend != "redis":
+            raise ValueError(
+                "LABBY_PUBLIC_RATE_LIMIT_BACKEND must be 'redis' outside development."
             )
 
         return self
