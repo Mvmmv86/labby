@@ -23,6 +23,6 @@ def enqueue_sales_message_dispatch(
         queue_name=SALES_OUTBOUND_QUEUE,
         idempotency_key=sales_message_dispatch_idempotency_key(message_id),
         payload={"message_id": message_id},
-        max_attempts=1,
+        max_attempts=3,
         commit=commit,
     )

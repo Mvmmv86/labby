@@ -7,11 +7,19 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import SessionLocal
-from app.domains.jobs.registry import JobExecutionContext, PermanentJobError, job_handlers
+from app.domains.jobs.registry import (
+    JobExecutionContext,
+    PermanentJobError,
+    RetryableJobError,
+    job_handlers,
+)
 from app.domains.sales.outbound_service import SALES_MESSAGE_DISPATCH_JOB
 from app.integrations.sales_channels import (
     EvolutionOutboundAdapter,
+    OutboundDeliveryUnknown,
     OutboundProviderError,
+    OutboundReconcileResult,
+    OutboundReconciliationUnavailable,
     OutboundSendResult,
 )
 
@@ -30,6 +38,17 @@ class SalesOutboundAdapter(Protocol):
     ) -> OutboundSendResult:
         ...
 
+    async def reconcile_message(
+        self,
+        *,
+        channel_config: dict[str, Any],
+        recipient_identifier: str,
+        content: str | None,
+        media_url: str | None,
+        idempotency_key: str,
+    ) -> OutboundReconcileResult | None:
+        ...
+
 
 @job_handlers.register(SALES_MESSAGE_DISPATCH_JOB)
 def dispatch_sales_message(context: JobExecutionContext) -> dict[str, Any]:
@@ -44,9 +63,16 @@ class SalesOutboundJobProcessor:
         db: Session,
         *,
         evolution_adapter: SalesOutboundAdapter | None = None,
+        reconciliation_grace_seconds: int | None = None,
     ) -> None:
         self.db = db
-        self.evolution_adapter = evolution_adapter or EvolutionOutboundAdapter(get_settings())
+        settings = get_settings()
+        self.evolution_adapter = evolution_adapter or EvolutionOutboundAdapter(settings)
+        self.reconciliation_grace_seconds = (
+            settings.sales_outbound_reconciliation_grace_seconds
+            if reconciliation_grace_seconds is None
+            else max(0, reconciliation_grace_seconds)
+        )
 
     def dispatch(self, context: JobExecutionContext) -> dict[str, Any]:
         message_id = str(context.payload.get("message_id") or "")
@@ -67,18 +93,6 @@ class SalesOutboundJobProcessor:
 
         if message["status"] == "failed":
             raise PermanentJobError("Mensagem ja esta marcada como failed")
-
-        if message["status"] == "sending":
-            self._mark_message_failed(
-                tenant_id=context.tenant_id,
-                message_id=message_id,
-                error=(
-                    "Mensagem estava em sending antes do job atual. "
-                    "Reconciliacao manual necessaria para evitar double-send."
-                ),
-            )
-            self.db.commit()
-            raise PermanentJobError("Mensagem em sending exige reconciliacao manual")
 
         if message["channel_type"] != "whatsapp_evolution":
             self._mark_message_failed(
@@ -108,10 +122,36 @@ class SalesOutboundJobProcessor:
             self.db.commit()
             raise PermanentJobError("Contato sem identificador para o canal")
 
-        attempt = self._create_or_load_attempt(
-            tenant_id=context.tenant_id,
-            message=message,
-        )
+        if message["status"] == "sending":
+            attempt = self._load_attempt_for_message(
+                tenant_id=context.tenant_id,
+                message_id=message_id,
+            )
+            if attempt is None:
+                self._mark_message_failed(
+                    tenant_id=context.tenant_id,
+                    message_id=message_id,
+                    error=(
+                        "Mensagem estava em sending sem ledger de dispatch. "
+                        "Reconciliacao manual necessaria para evitar double-send."
+                    ),
+                )
+                self.db.commit()
+                raise PermanentJobError("Mensagem em sending exige reconciliacao manual")
+            reconciliation = self._reconcile_sending_message(
+                context=context,
+                message=message,
+                attempt=attempt,
+                recipient_identifier=recipient_identifier,
+            )
+            if reconciliation is not None:
+                return reconciliation
+        else:
+            attempt = self._create_or_load_attempt(
+                tenant_id=context.tenant_id,
+                message=message,
+            )
+
         if attempt["status"] == "sent" and attempt["provider_external_id"]:
             self._mark_message_sent(
                 tenant_id=context.tenant_id,
@@ -128,7 +168,7 @@ class SalesOutboundJobProcessor:
             }
         if attempt["status"] == "failed":
             raise PermanentJobError("Tentativa de envio ja falhou; recrie o dispatch manualmente")
-        if attempt["status"] == "sending" and message["status"] != "pending":
+        if attempt["status"] == "sending" and message["status"] not in {"pending", "sending"}:
             raise PermanentJobError("Tentativa em andamento exige reconciliacao manual")
 
         self._mark_message_sending(context.tenant_id, message_id)
@@ -160,6 +200,11 @@ class SalesOutboundJobProcessor:
                     idempotency_key=str(attempt["idempotency_key"]),
                 )
             )
+        except OutboundDeliveryUnknown as exc:
+            self._mark_attempt_unknown(str(attempt["id"]), exc.__class__.__name__, str(exc))
+            self._mark_message_unknown(context.tenant_id, message_id, str(exc))
+            self.db.commit()
+            raise RetryableJobError(str(exc)) from exc
         except OutboundProviderError as exc:
             self._mark_attempt_failed(str(attempt["id"]), exc.__class__.__name__, str(exc))
             self._mark_message_failed(context.tenant_id, message_id, str(exc))
@@ -226,6 +271,84 @@ class SalesOutboundJobProcessor:
         if row is None:
             raise PermanentJobError("Mensagem nao encontrada")
         return dict(row)
+
+    def _load_attempt_for_message(self, *, tenant_id: str, message_id: str):
+        return (
+            self.db.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM sales_message_dispatch_attempts
+                    WHERE tenant_id = :tenant_id
+                      AND message_id = :message_id
+                      AND provider = 'evolution'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                    FOR UPDATE
+                    """
+                ),
+                {"tenant_id": tenant_id, "message_id": message_id},
+            )
+            .mappings()
+            .first()
+        )
+
+    def _reconcile_sending_message(
+        self,
+        *,
+        context: JobExecutionContext,
+        message: dict[str, Any],
+        attempt,
+        recipient_identifier: str,
+    ) -> dict[str, Any] | None:
+        try:
+            result = asyncio.run(
+                self.evolution_adapter.reconcile_message(
+                    channel_config=dict(message["channel_config"] or {}),
+                    recipient_identifier=recipient_identifier,
+                    content=message["content"],
+                    media_url=message["media_url"],
+                    idempotency_key=str(attempt["idempotency_key"]),
+                )
+            )
+        except OutboundReconciliationUnavailable as exc:
+            self._mark_attempt_unknown(str(attempt["id"]), exc.__class__.__name__, str(exc))
+            self._mark_message_unknown(context.tenant_id, str(message["id"]), str(exc))
+            self.db.commit()
+            raise RetryableJobError(str(exc)) from exc
+
+        if result is not None:
+            self._mark_attempt_sent(
+                attempt_id=str(attempt["id"]),
+                provider_external_id=result.external_id,
+                response_payload={
+                    "reconciled": True,
+                    "provider_response": result.response,
+                },
+            )
+            self._mark_message_sent(
+                tenant_id=context.tenant_id,
+                message_id=str(message["id"]),
+                provider=result.provider,
+                external_id=result.external_id,
+                response={
+                    "reconciled": True,
+                    "provider_response": result.response,
+                },
+            )
+            self._mark_campaign_recipient_sent(message_id=str(message["id"]))
+            self.db.commit()
+            return {
+                "message_id": str(message["id"]),
+                "provider": result.provider,
+                "delivery_external_id": result.external_id,
+                "reconciled": True,
+            }
+
+        if not self._reconciliation_grace_elapsed(attempt):
+            raise RetryableJobError("Aguardando janela de reconciliacao antes de reenviar")
+
+        return None
 
     def _create_or_load_attempt(self, *, tenant_id: str, message: dict[str, Any]):
         return (
@@ -314,6 +437,23 @@ class SalesOutboundJobProcessor:
             },
         )
 
+    def _mark_attempt_unknown(self, attempt_id: str, error_code: str, error_message: str) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE sales_message_dispatch_attempts
+                SET error_code = :error_code,
+                    error_message = :error_message
+                WHERE id = :attempt_id
+                """
+            ),
+            {
+                "attempt_id": attempt_id,
+                "error_code": error_code[:120],
+                "error_message": error_message[:2000],
+            },
+        )
+
     def _mark_message_sending(self, tenant_id: str, message_id: str) -> None:
         self.db.execute(
             text(
@@ -371,6 +511,20 @@ class SalesOutboundJobProcessor:
                 """
                 UPDATE sales_messages
                 SET status = 'failed',
+                    error = :error
+                WHERE tenant_id = :tenant_id
+                  AND id = :message_id
+                """
+            ),
+            {"tenant_id": tenant_id, "message_id": message_id, "error": error[:2000]},
+        )
+
+    def _mark_message_unknown(self, tenant_id: str, message_id: str, error: str) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE sales_messages
+                SET status = 'sending',
                     error = :error
                 WHERE tenant_id = :tenant_id
                   AND id = :message_id
@@ -445,6 +599,26 @@ class SalesOutboundJobProcessor:
             ),
             {"message_id": message_id, "error": error[:2000]},
         )
+
+    def _reconciliation_grace_elapsed(self, attempt) -> bool:
+        if self.reconciliation_grace_seconds <= 0:
+            return True
+        started_at = attempt["started_at"] or attempt["created_at"]
+        row = self.db.execute(
+            text(
+                """
+                SELECT COALESCE(
+                    :started_at <= NOW() - (:grace_seconds * INTERVAL '1 second'),
+                    false
+                )
+                """
+            ),
+            {
+                "started_at": started_at,
+                "grace_seconds": self.reconciliation_grace_seconds,
+            },
+        ).scalar_one()
+        return bool(row)
 
 
 def _json(value: dict[str, Any]) -> str:

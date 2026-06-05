@@ -624,8 +624,6 @@ Ainda falta em A3:
 - Webhooks Telegram, WhatsApp Cloud e Discord.
 - Bot com LLM real por job/adapter standalone, se entrar no MVP de producao.
 - Rate limit consolidado para webhooks publicos de providers futuros.
-- Retry seguro com reconciliacao/consulta no provider antes de reenviar
-  mensagens outbound.
 - Audit log de mutations criticas.
 
 ### A4 - Integracoes reais standalone
@@ -714,14 +712,28 @@ Entregue localmente em 2026-06-05, fatia Rate Limit/Retention:
   - `LABBY_OPERATIONAL_HISTORY_CLEANUP_INTERVAL_SECONDS`
 - Documento `docs/a5-observability-loadtest-handoff.md`.
 
+Entregue localmente em 2026-06-05, fatia Retry Seguro Outbound Evolution:
+
+- Jobs `sales.message.dispatch` agora usam `max_attempts=3`.
+- Falhas de resultado desconhecido no Evolution (`timeout`, erro de transporte
+  ou 5xx) deixam a mensagem em `sending` e geram retry.
+- Antes de reenviar, o worker consulta o Evolution via
+  `/chat/findMessages/{instance}`.
+- Se a mensagem e encontrada na Evolution, a Labby reconcilia
+  `delivery_external_id` e nao reenvia.
+- Se a mensagem nao e encontrada, o reenvio so acontece depois da janela
+  `LABBY_SALES_OUTBOUND_RECONCILIATION_GRACE_SECONDS`.
+- Testes cobrem delivery unknown, reconciliacao encontrada sem reenvio,
+  reconciliacao ausente aguardando janela e reenvio apenas apos consulta.
+
 Ainda falta em A5:
 
-- Retry seguro de outbound com consulta/reconciliacao no provider antes de
-  reenviar.
 - Alertas reais para `sales_outbound_stuck`, filas paradas, jobs falhos e rate
   limit bloqueado.
 - Metricas de request latency/error rate, DB pool usage e Redis latency.
 - Load test 500 usuarios/50 tenants.
+- Proxima prioridade de produto: retomar Social Media completo. Chat box,
+  WhatsApp Cloud, Telegram e Discord ficam para segunda parte.
 
 ### A6 - Cutover Labby 100%
 

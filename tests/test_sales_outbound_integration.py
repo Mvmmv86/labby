@@ -5,12 +5,22 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.domains.jobs.registry import JobExecutionContext, PermanentJobError, job_handlers
+from app.domains.jobs.registry import (
+    JobExecutionContext,
+    PermanentJobError,
+    RetryableJobError,
+    job_handlers,
+)
 from app.domains.sales.conversation_service import SalesConversationService
 from app.domains.sales.outbound_jobs import SalesOutboundJobProcessor
 from app.domains.sales.outbound_service import SALES_MESSAGE_DISPATCH_JOB
 from app.domains.sales.webhook_jobs import SalesWebhookJobProcessor
-from app.integrations.sales_channels import OutboundProviderError, OutboundSendResult
+from app.integrations.sales_channels import (
+    OutboundDeliveryUnknown,
+    OutboundProviderError,
+    OutboundReconcileResult,
+    OutboundSendResult,
+)
 from tests.test_sales_contacts_integration import TENANT_1, current_one
 from tests.test_sales_contacts_integration import (
     db_session as _db_session_fixture,  # noqa: F401
@@ -35,6 +45,9 @@ class FakeEvolutionOutboundAdapter:
             response={"key": {"id": self.external_id}},
         )
 
+    async def reconcile_message(self, **kwargs) -> OutboundReconcileResult | None:
+        return None
+
 
 class FailingEvolutionOutboundAdapter:
     def __init__(self) -> None:
@@ -43,6 +56,39 @@ class FailingEvolutionOutboundAdapter:
     async def send_message(self, **kwargs) -> OutboundSendResult:
         self.calls.append(kwargs)
         raise OutboundProviderError("timeout")
+
+    async def reconcile_message(self, **kwargs) -> OutboundReconcileResult | None:
+        return None
+
+
+class UnknownEvolutionOutboundAdapter(FakeEvolutionOutboundAdapter):
+    async def send_message(self, **kwargs) -> OutboundSendResult:
+        self.calls.append(kwargs)
+        raise OutboundDeliveryUnknown("timeout")
+
+
+class ReconcileFoundEvolutionOutboundAdapter(FakeEvolutionOutboundAdapter):
+    def __init__(self, *, external_id: str = "evo-reconciled-1") -> None:
+        super().__init__(external_id=external_id)
+        self.reconcile_calls: list[dict[str, Any]] = []
+
+    async def reconcile_message(self, **kwargs) -> OutboundReconcileResult | None:
+        self.reconcile_calls.append(kwargs)
+        return OutboundReconcileResult(
+            provider="evolution",
+            external_id=self.external_id,
+            response={"key": {"id": self.external_id}, "metadata": kwargs["idempotency_key"]},
+        )
+
+
+class ReconcileMissingEvolutionOutboundAdapter(FakeEvolutionOutboundAdapter):
+    def __init__(self, *, external_id: str = "evo-resend-1") -> None:
+        super().__init__(external_id=external_id)
+        self.reconcile_calls: list[dict[str, Any]] = []
+
+    async def reconcile_message(self, **kwargs) -> OutboundReconcileResult | None:
+        self.reconcile_calls.append(kwargs)
+        return None
 
 
 def test_sales_outbound_handler_is_registered() -> None:
@@ -79,6 +125,7 @@ def test_manual_message_dispatches_once_and_reconciles_status(
         payload=dict(job["payload"]),
         attempts=1,
     )
+    assert job["max_attempts"] == 3
     adapter = FakeEvolutionOutboundAdapter()
     processor = SalesOutboundJobProcessor(db_session, evolution_adapter=adapter)
 
@@ -207,6 +254,138 @@ def test_outbound_provider_error_marks_message_and_attempt_failed(
     assert attempt["status"] == "failed"
     assert attempt["error_code"] == "OutboundProviderError"
     assert attempt["error_message"] == "timeout"
+
+
+def test_outbound_delivery_unknown_stays_sending_for_reconciliation(
+    db_session: Session,
+) -> None:
+    conversation_id = create_evolution_conversation(db_session)
+    sent = SalesConversationService(db_session).send_message(
+        current=current_one(),
+        conversation_id=str(conversation_id),
+        conteudo="Ola, Paula",
+    )
+    adapter = UnknownEvolutionOutboundAdapter()
+
+    with pytest.raises(RetryableJobError):
+        SalesOutboundJobProcessor(db_session, evolution_adapter=adapter).dispatch(
+            context_for_message(str(sent["id"]))
+        )
+
+    assert len(adapter.calls) == 1
+    message = db_session.execute(
+        text("SELECT status, error FROM sales_messages WHERE id = :message_id"),
+        {"message_id": sent["id"]},
+    ).mappings().one()
+    assert message["status"] == "sending"
+    assert message["error"] == "timeout"
+    attempt = db_session.execute(
+        text(
+            """
+            SELECT status, error_code, error_message
+            FROM sales_message_dispatch_attempts
+            WHERE message_id = :message_id
+            """
+        ),
+        {"message_id": sent["id"]},
+    ).mappings().one()
+    assert attempt["status"] == "sending"
+    assert attempt["error_code"] == "OutboundDeliveryUnknown"
+    assert attempt["error_message"] == "timeout"
+
+
+def test_outbound_retry_reconciles_found_message_without_resending(
+    db_session: Session,
+) -> None:
+    conversation_id = create_evolution_conversation(db_session)
+    sent = SalesConversationService(db_session).send_message(
+        current=current_one(),
+        conversation_id=str(conversation_id),
+        conteudo="Ola, Paula",
+    )
+    with pytest.raises(RetryableJobError):
+        SalesOutboundJobProcessor(
+            db_session,
+            evolution_adapter=UnknownEvolutionOutboundAdapter(),
+        ).dispatch(context_for_message(str(sent["id"])))
+
+    adapter = ReconcileFoundEvolutionOutboundAdapter()
+    result = SalesOutboundJobProcessor(
+        db_session,
+        evolution_adapter=adapter,
+        reconciliation_grace_seconds=0,
+    ).dispatch(context_for_message(str(sent["id"]), attempts=2))
+
+    assert result["reconciled"] is True
+    assert result["delivery_external_id"] == "evo-reconciled-1"
+    assert adapter.calls == []
+    assert len(adapter.reconcile_calls) == 1
+    message = db_session.execute(
+        text(
+            """
+            SELECT status, delivery_external_id
+            FROM sales_messages
+            WHERE id = :message_id
+            """
+        ),
+        {"message_id": sent["id"]},
+    ).mappings().one()
+    assert message["status"] == "sent"
+    assert message["delivery_external_id"] == "evo-reconciled-1"
+
+
+def test_outbound_retry_waits_grace_before_resend_when_reconciliation_missing(
+    db_session: Session,
+) -> None:
+    conversation_id = create_evolution_conversation(db_session)
+    sent = SalesConversationService(db_session).send_message(
+        current=current_one(),
+        conversation_id=str(conversation_id),
+        conteudo="Ola, Paula",
+    )
+    with pytest.raises(RetryableJobError):
+        SalesOutboundJobProcessor(
+            db_session,
+            evolution_adapter=UnknownEvolutionOutboundAdapter(),
+        ).dispatch(context_for_message(str(sent["id"])))
+
+    adapter = ReconcileMissingEvolutionOutboundAdapter()
+    with pytest.raises(RetryableJobError):
+        SalesOutboundJobProcessor(
+            db_session,
+            evolution_adapter=adapter,
+            reconciliation_grace_seconds=60,
+        ).dispatch(context_for_message(str(sent["id"]), attempts=2))
+
+    assert len(adapter.reconcile_calls) == 1
+    assert adapter.calls == []
+
+
+def test_outbound_retry_resends_only_after_reconciliation_query(
+    db_session: Session,
+) -> None:
+    conversation_id = create_evolution_conversation(db_session)
+    sent = SalesConversationService(db_session).send_message(
+        current=current_one(),
+        conversation_id=str(conversation_id),
+        conteudo="Ola, Paula",
+    )
+    with pytest.raises(RetryableJobError):
+        SalesOutboundJobProcessor(
+            db_session,
+            evolution_adapter=UnknownEvolutionOutboundAdapter(),
+        ).dispatch(context_for_message(str(sent["id"])))
+
+    adapter = ReconcileMissingEvolutionOutboundAdapter()
+    result = SalesOutboundJobProcessor(
+        db_session,
+        evolution_adapter=adapter,
+        reconciliation_grace_seconds=0,
+    ).dispatch(context_for_message(str(sent["id"]), attempts=2))
+
+    assert len(adapter.reconcile_calls) == 1
+    assert len(adapter.calls) == 1
+    assert result["delivery_external_id"] == "evo-resend-1"
 
 
 def test_outbound_dispatch_marks_campaign_recipient_sent(db_session: Session) -> None:
@@ -395,7 +574,7 @@ def create_campaign_message(session: Session) -> UUID:
     return UUID(str(message_id))
 
 
-def context_for_message(message_id: str) -> JobExecutionContext:
+def context_for_message(message_id: str, *, attempts: int = 1) -> JobExecutionContext:
     return JobExecutionContext(
         job_id="outbound-job",
         tenant_id=str(TENANT_1),
@@ -403,7 +582,7 @@ def context_for_message(message_id: str) -> JobExecutionContext:
         job_type=SALES_MESSAGE_DISPATCH_JOB,
         queue_name="worker-sales-outbound",
         payload={"message_id": message_id},
-        attempts=1,
+        attempts=attempts,
     )
 
 

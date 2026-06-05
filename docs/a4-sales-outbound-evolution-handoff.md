@@ -39,6 +39,15 @@ Inclui:
 - Antes de chamar o provider, a mensagem muda para `sending`. Se o worker cair
   nesse ponto, retry automatico nao reenvia cegamente; a mensagem e marcada
   para reconciliacao/falha em vez de arriscar double-send.
+- Falhas de resultado desconhecido (`timeout`, erro de transporte ou 5xx do
+  Evolution) deixam a mensagem em `sending` e fazem o job entrar em retry.
+- Antes de reenviar uma mensagem em `sending`, o worker consulta o Evolution em
+  `/chat/findMessages/{instance}` procurando a mensagem por metadata de
+  idempotencia ou conteudo enviado.
+- Se a consulta encontrar a mensagem, a Labby reconcilia `delivery_external_id`
+  e nao reenvia.
+- Se a consulta nao encontrar a mensagem, o reenvio so acontece depois da
+  janela `LABBY_SALES_OUTBOUND_RECONCILIATION_GRACE_SECONDS`.
 - Quando Evolution retorna id externo, o worker marca a mensagem como `sent`,
   preenche `delivery_provider/delivery_external_id` e atualiza recipients de
   campanha para `sent`.
@@ -84,7 +93,14 @@ Inclui:
   - webhook de status nao regride `delivered` para `sent`;
   - mensagem que ja estava em `sending` falha fechada sem chamar provider;
   - erro do provider marca mensagem e attempt como `failed`;
+  - timeout/resultado desconhecido fica em `sending` e gera retry;
+  - retry com mensagem encontrada no Evolution reconcilia sem reenvio;
+  - retry com mensagem nao encontrada aguarda janela de graça;
+  - retry so reenvia depois de consulta de reconciliacao;
   - envio de campanha marca recipient/campaign como `sent`.
+- `tests/test_sales_channels_adapter.py`
+  - helpers de reconciliacao localizam mensagens por metadata e extraem
+    `key.id`.
 - `tests/test_sales_webhooks_integration.py`
   - rate limit do webhook Evolution por canal;
   - secret invalido nao consome quota de canal.
@@ -105,6 +121,4 @@ Inclui:
   implementado.
 - Targeting de campanha por `filtro_tags`/`filtro_grupo` segue deferido.
 - Observabilidade agregada por provider/fila ainda entra em A5.
-- Retry seguro com consulta/reconciliacao no provider antes de reenviar segue
-  como gate de A5/A6 para sair do modo fail-closed de MVP.
 - Rate limit em Redis/borda e politica de retencao entram no handoff de A5.

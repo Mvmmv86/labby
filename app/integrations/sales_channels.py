@@ -21,7 +21,22 @@ class OutboundSendResult:
     response: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class OutboundReconcileResult:
+    provider: str
+    external_id: str
+    response: dict[str, Any]
+
+
 class OutboundProviderError(Exception):
+    pass
+
+
+class OutboundDeliveryUnknown(Exception):
+    pass
+
+
+class OutboundReconciliationUnavailable(Exception):
     pass
 
 
@@ -221,13 +236,22 @@ class EvolutionOutboundAdapter:
         )
 
         async with httpx.AsyncClient(timeout=self.settings.evolution_api_timeout_seconds) as client:
-            response = await client.post(
-                f"{base_url}{endpoint}",
-                json=payload,
-                headers=headers,
-            )
+            try:
+                response = await client.post(
+                    f"{base_url}{endpoint}",
+                    json=payload,
+                    headers=headers,
+                )
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                raise OutboundDeliveryUnknown(
+                    "Evolution delivery result unknown; reconciliation required"
+                ) from exc
 
         response_payload = _safe_json(response)
+        if response.status_code >= 500:
+            raise OutboundDeliveryUnknown(
+                "Evolution returned server error; reconciliation required"
+            )
         if response.status_code >= 400:
             raise OutboundProviderError(
                 str(response_payload.get("message") or response_payload or response.text)
@@ -243,6 +267,84 @@ class EvolutionOutboundAdapter:
             response=response_payload,
         )
 
+    async def reconcile_message(
+        self,
+        *,
+        channel_config: dict[str, Any],
+        recipient_identifier: str,
+        content: str | None,
+        media_url: str | None,
+        idempotency_key: str,
+    ) -> OutboundReconcileResult | None:
+        if not self.settings.evolution_api_url or not self.settings.evolution_api_key:
+            raise OutboundReconciliationUnavailable(
+                "LABBY_EVOLUTION_API_URL e LABBY_EVOLUTION_API_KEY nao configurados"
+            )
+
+        instance_name = str(channel_config.get("instance_name") or "").strip()
+        if not instance_name:
+            raise OutboundReconciliationUnavailable("Canal Evolution sem instance_name")
+
+        remote_jid = _evolution_remote_jid(recipient_identifier)
+        if not remote_jid:
+            raise OutboundReconciliationUnavailable("Destinatario Evolution sem numero")
+
+        base_url = self.settings.evolution_api_url.rstrip("/")
+        headers = {"apikey": self.settings.evolution_api_key}
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.settings.evolution_api_timeout_seconds
+            ) as client:
+                response = await client.post(
+                    f"{base_url}/chat/findMessages/{instance_name}",
+                    json={
+                        "where": {
+                            "key": {
+                                "remoteJid": remote_jid,
+                                "fromMe": True,
+                            }
+                        }
+                    },
+                    headers=headers,
+                )
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise OutboundReconciliationUnavailable(
+                "Evolution reconciliation unavailable"
+            ) from exc
+
+        if response.status_code >= 400:
+            raise OutboundReconciliationUnavailable(
+                "Evolution reconciliation returned error"
+            )
+
+        payload = _safe_json_any(response)
+        messages = _extract_message_collection(payload)
+        if messages is None:
+            raise OutboundReconciliationUnavailable(
+                "Evolution reconciliation response did not include messages"
+            )
+
+        for message in messages:
+            if not _message_matches_outbound(
+                message,
+                idempotency_key=idempotency_key,
+                content=content,
+                media_url=media_url,
+            ):
+                continue
+            external_id = _extract_outbound_external_id(message)
+            if not external_id:
+                raise OutboundReconciliationUnavailable(
+                    "Evolution reconciliation found message without external id"
+                )
+            return OutboundReconcileResult(
+                provider="evolution",
+                external_id=external_id,
+                response=message,
+            )
+
+        return None
+
 
 def _safe_json(response: httpx.Response) -> dict[str, Any]:
     try:
@@ -252,11 +354,26 @@ def _safe_json(response: httpx.Response) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _safe_json_any(response: httpx.Response) -> Any:
+    try:
+        return response.json()
+    except ValueError:
+        return {}
+
+
 def _evolution_number(identifier: str) -> str:
     cleaned = str(identifier or "").strip()
     if "@" in cleaned:
         cleaned = cleaned.split("@", 1)[0]
     return "".join(character for character in cleaned if character.isdigit())
+
+
+def _evolution_remote_jid(identifier: str) -> str:
+    cleaned = str(identifier or "").strip()
+    if "@" in cleaned:
+        return cleaned
+    number = _evolution_number(cleaned)
+    return f"{number}@s.whatsapp.net" if number else ""
 
 
 def _evolution_payload(
@@ -316,3 +433,60 @@ def _extract_outbound_external_id(payload: dict[str, Any]) -> str | None:
                 return str(message[key_name])
 
     return None
+
+
+def _extract_message_collection(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    for key in ("messages", "data", "records", "result"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [item for item in value if isinstance(item, dict)]
+        if isinstance(value, dict):
+            nested = _extract_message_collection(value)
+            if nested is not None:
+                return nested
+    if payload.get("key") or payload.get("message"):
+        return [payload]
+    return None
+
+
+def _message_matches_outbound(
+    message: dict[str, Any],
+    *,
+    idempotency_key: str,
+    content: str | None,
+    media_url: str | None,
+) -> bool:
+    if _contains_idempotency_key(message, idempotency_key):
+        return True
+    if content and content in _message_text_values(message):
+        return True
+    if media_url and media_url in _message_text_values(message):
+        return True
+    return False
+
+
+def _contains_idempotency_key(value: Any, idempotency_key: str) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "labby_idempotency_key" and str(item) == idempotency_key:
+                return True
+            if _contains_idempotency_key(item, idempotency_key):
+                return True
+    if isinstance(value, list):
+        return any(_contains_idempotency_key(item, idempotency_key) for item in value)
+    return False
+
+
+def _message_text_values(value: Any) -> set[str]:
+    texts: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"text", "conversation", "caption", "media"} and item:
+                texts.add(str(item))
+            texts.update(_message_text_values(item))
+    elif isinstance(value, list):
+        for item in value:
+            texts.update(_message_text_values(item))
+    return texts

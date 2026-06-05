@@ -32,6 +32,8 @@ Inclui:
   - `sales_message_dispatch_attempts` finalizados antigos.
 - Task Celery `labby.jobs.cleanup_operational_history`.
 - Celery beat agenda o cleanup pelo intervalo configuravel.
+- Retry seguro de outbound Evolution com consulta em
+  `/chat/findMessages/{instance}` antes de reenviar.
 
 ## Configuracoes novas
 
@@ -46,6 +48,8 @@ Inclui:
   - default: `1000`.
 - `LABBY_OPERATIONAL_HISTORY_CLEANUP_INTERVAL_SECONDS`
   - default: `3600`.
+- `LABBY_SALES_OUTBOUND_RECONCILIATION_GRACE_SECONDS`
+  - default: `60`.
 
 ## Decisoes
 
@@ -58,9 +62,10 @@ Inclui:
   temporariamente; o widget continua fail-closed.
 - Cleanup nao remove attempts em `sending`; apenas attempts finalizados
   (`sent`, `failed`, `skipped`) entram na retencao.
-- Retry automatico de outbound Evolution ainda nao foi aumentado. O sistema
-  continua fail-closed ate existir consulta/reconciliacao confiavel no provider
-  antes de reenviar.
+- Jobs de outbound Evolution usam retry, mas nunca reenviam uma mensagem em
+  `sending` sem antes consultar o provider.
+- Resultado desconhecido (`timeout`, erro de transporte ou 5xx) mantem a
+  mensagem em `sending`; erro definitivo do provider segue marcando `failed`.
 
 ## Testes adicionados
 
@@ -82,11 +87,17 @@ Inclui:
   - webhook Evolution com Redis nao grava evento permitido;
   - webhook Evolution com Redis grava evento bloqueado;
   - webhook Evolution com Redis indisponivel cai para o rate limit por DB.
+- `tests/test_sales_outbound_integration.py`
+  - delivery unknown fica em `sending`;
+  - retry encontrado no provider reconcilia sem reenvio;
+  - retry nao encontrado aguarda janela antes de reenviar;
+  - reenvio so acontece apos consulta de reconciliacao.
 
 ## Pendencias de A5/A6
 
 - Retry seguro de outbound com consulta/reconciliacao no Evolution antes de
-  reenviar mensagem possivelmente entregue.
+  reenviar mensagem possivelmente entregue foi iniciado nesta fatia; ainda deve
+  passar por smoke real com Evolution.
 - Alertas reais sobre `sales_outbound_stuck`, filas paradas, jobs falhos e
   rate limit bloqueado.
 - Metricas de request latency/error rate, DB pool usage e Redis latency.

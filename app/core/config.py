@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     sales_dispatch_attempt_retention_days: int = 90
     operational_history_cleanup_batch_size: int = 1000
     operational_history_cleanup_interval_seconds: int = 3600
+    sales_outbound_reconciliation_grace_seconds: int = 60
     social_news_capture_lookback_hours: int = 24
     social_news_max_source_requests_per_run: int = 10
     social_news_posts_per_source: int = 20

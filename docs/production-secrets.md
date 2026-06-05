@@ -48,6 +48,7 @@ Regras:
 - `LABBY_SALES_DISPATCH_ATTEMPT_RETENTION_DAYS`
 - `LABBY_OPERATIONAL_HISTORY_CLEANUP_BATCH_SIZE`
 - `LABBY_OPERATIONAL_HISTORY_CLEANUP_INTERVAL_SECONDS`
+- `LABBY_SALES_OUTBOUND_RECONCILIATION_GRACE_SECONDS`
 
 Regras:
 
@@ -71,6 +72,8 @@ Regras:
 - Secrets de webhook de canais Evolution sao gerados por canal e nao devem ser
   configurados manualmente em ambiente.
 - Evolution outbound usa jobs; request HTTP nao espera envio real terminar.
+- `LABBY_SALES_OUTBOUND_RECONCILIATION_GRACE_SECONDS` define a janela minima
+  antes de reenviar mensagem `sending` nao encontrada na consulta ao provider.
 
 ## Email
 
