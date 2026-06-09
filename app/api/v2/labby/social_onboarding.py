@@ -12,6 +12,8 @@ from app.schemas.social_onboarding import (
     SocialOnboardingFakeConnectRequest,
     SocialOnboardingJobResponse,
     SocialOnboardingMutationResponse,
+    SocialOnboardingPhylloCompleteRequest,
+    SocialOnboardingPhylloConnectTokenResponse,
     SocialOnboardingSessionCreate,
     SocialOnboardingSessionPatch,
     SocialOnboardingSessionResponse,
@@ -89,6 +91,46 @@ def connect_fake_account(
         followers_count=data.followers_count,
         posts_count=data.posts_count,
         average_engagement_rate=data.average_engagement_rate,
+    )
+    return SocialOnboardingMutationResponse(
+        session=_session_response(session),
+        job=_job_response(job),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/phyllo/connect-token",
+    response_model=SocialOnboardingPhylloConnectTokenResponse,
+)
+def create_phyllo_connect_token(
+    session_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialOnboardingPhylloConnectTokenResponse:
+    return SocialOnboardingPhylloConnectTokenResponse(
+        **service.create_phyllo_connect_token(
+            current=current,
+            session_id=str(session_id),
+        )
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/phyllo/complete",
+    response_model=SocialOnboardingMutationResponse,
+)
+def complete_phyllo_connection(
+    session_id: UUID,
+    data: SocialOnboardingPhylloCompleteRequest,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialOnboardingMutationResponse:
+    session, job = service.complete_phyllo_connection(
+        current=current,
+        session_id=str(session_id),
+        phyllo_user_id=data.user_id,
+        account_id=data.account_id,
+        work_platform_id=data.work_platform_id,
     )
     return SocialOnboardingMutationResponse(
         session=_session_response(session),

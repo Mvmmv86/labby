@@ -23,7 +23,12 @@ from app.models.social_news import (
     SocialNewsSubscriber,
     SocialNewsSubscriberConsentEvent,
 )
-from app.models.social_onboarding import SocialOnboardingSession, SocialReferenceProfile
+from app.models.social_onboarding import (
+    SocialOnboardingSession,
+    SocialPhylloAccount,
+    SocialPhylloUser,
+    SocialReferenceProfile,
+)
 
 __all__ = [
     "Base",
@@ -52,6 +57,8 @@ __all__ = [
     "SocialNewsSubscriber",
     "SocialNewsSubscriberConsentEvent",
     "SocialOnboardingSession",
+    "SocialPhylloAccount",
+    "SocialPhylloUser",
     "SocialReferenceProfile",
     "TeamInvite",
     "Tenant",

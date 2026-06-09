@@ -74,6 +74,44 @@ class FakeSocialOnboardingService:
             make_job_record(),
         )
 
+    def create_phyllo_connect_token(self, *, current, session_id):
+        self.current = current
+        return {
+            "user_id": "phyllo-user",
+            "sdk_token": "sdk-token",
+            "environment": "staging",
+            "client_display_name": "Labby",
+            "work_platform_id": "instagram-platform",
+            "products": ["IDENTITY", "ENGAGEMENT"],
+        }
+
+    def complete_phyllo_connection(
+        self,
+        *,
+        current,
+        session_id,
+        phyllo_user_id,
+        account_id,
+        work_platform_id,
+    ):
+        self.current = current
+        self.connected_payload = {
+            "session_id": session_id,
+            "phyllo_user_id": phyllo_user_id,
+            "account_id": account_id,
+            "work_platform_id": work_platform_id,
+        }
+        return (
+            make_session_row(
+                id=UUID(str(session_id)),
+                status="analyzing",
+                primary_provider="instagram",
+                connection_mode="oauth",
+                connected_account_handle="marca",
+            ),
+            make_job_record(),
+        )
+
     def add_reference(self, *, current, session_id, provider, handle, label, profile_url):
         self.current = current
         self.reference_payload = {
@@ -241,6 +279,45 @@ def test_connect_fake_account_enqueues_diagnostic_contract() -> None:
     assert body["session"]["connected_account_handle"] == "minhamarca"
     assert body["job"]["job_type"] == "social.onboarding.diagnose"
     assert service.connected_payload["handle"] == "@MinhaMarca"
+
+
+def test_create_phyllo_connect_token_contract() -> None:
+    client, _ = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/phyllo/connect-token",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {
+        "user_id": "phyllo-user",
+        "sdk_token": "sdk-token",
+        "environment": "staging",
+        "client_display_name": "Labby",
+        "work_platform_id": "instagram-platform",
+        "products": ["IDENTITY", "ENGAGEMENT"],
+    }
+
+
+def test_complete_phyllo_connection_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/phyllo/complete",
+        json={
+            "user_id": "phyllo-user",
+            "account_id": "phyllo-account",
+            "work_platform_id": "instagram-platform",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["connection_mode"] == "oauth"
+    assert body["session"]["connected_account_handle"] == "marca"
+    assert body["job"]["job_type"] == "social.onboarding.diagnose"
+    assert service.connected_payload["account_id"] == "phyllo-account"
 
 
 def test_add_reference_contract() -> None:

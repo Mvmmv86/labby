@@ -64,6 +64,14 @@ class Settings(BaseSettings):
     social_news_rank_limit: int = 5
     social_onboarding_reconciler_batch_size: int = 100
     social_onboarding_reconciler_interval_seconds: int = 300
+    phyllo_api_base_url: str = "https://api.staging.getphyllo.com"
+    phyllo_environment: Literal["sandbox", "staging", "production"] = "staging"
+    phyllo_client_id: str | None = None
+    phyllo_client_secret: str | None = None
+    phyllo_timeout_seconds: float = 20.0
+    phyllo_connect_display_name: str = "Labby"
+    phyllo_products: str = "IDENTITY,ENGAGEMENT"
+    phyllo_instagram_work_platform_id: str = "9bb8913b-ddd9-430b-a66a-d74d846e6c66"
     allowed_origins: str = (
         "http://localhost:3000,http://localhost:3001,https://app.labby.com.br"
     )
@@ -73,6 +81,10 @@ class Settings(BaseSettings):
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def phyllo_products_list(self) -> list[str]:
+        return [product.strip() for product in self.phyllo_products.split(",") if product.strip()]
 
     @model_validator(mode="after")
     def validate_protected_environment(self) -> Self:

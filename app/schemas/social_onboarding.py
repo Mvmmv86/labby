@@ -40,6 +40,12 @@ class SocialReferenceProfileCreate(BaseModel):
     profile_url: str | None = Field(default=None, max_length=1000)
 
 
+class SocialOnboardingPhylloCompleteRequest(BaseModel):
+    user_id: str = Field(min_length=1, max_length=180)
+    account_id: str = Field(min_length=1, max_length=180)
+    work_platform_id: str | None = Field(default=None, max_length=180)
+
+
 class SocialReferenceProfileResponse(BaseModel):
     id: UUID
     provider: str
@@ -88,3 +94,12 @@ class SocialOnboardingCurrentResponse(BaseModel):
 class SocialOnboardingMutationResponse(BaseModel):
     session: SocialOnboardingSessionResponse
     job: SocialOnboardingJobResponse | None = None
+
+
+class SocialOnboardingPhylloConnectTokenResponse(BaseModel):
+    user_id: str
+    sdk_token: str
+    environment: str
+    client_display_name: str
+    work_platform_id: str
+    products: list[str]

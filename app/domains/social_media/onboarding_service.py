@@ -6,8 +6,14 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.config import Settings, get_settings
 from app.core.dependencies import CurrentMembership
 from app.domains.jobs.job_service import JobQueueService, JobRecord
+from app.integrations.phyllo import (
+    PhylloClient,
+    PhylloConfigurationError,
+    PhylloProviderError,
+)
 
 SOCIAL_ONBOARDING_DIAGNOSE_JOB = "social.onboarding.diagnose"
 SOCIAL_ONBOARDING_QUEUE = "worker-social-analysis"
@@ -23,9 +29,18 @@ OBJECTIVE_LABELS = {
 
 
 class SocialOnboardingService:
-    def __init__(self, db: Session, *, job_queue: JobQueueService) -> None:
+    def __init__(
+        self,
+        db: Session,
+        *,
+        job_queue: JobQueueService,
+        settings: Settings | None = None,
+        phyllo_client: Any | None = None,
+    ) -> None:
         self.db = db
         self.job_queue = job_queue
+        self.settings = settings or get_settings()
+        self.phyllo_client = phyllo_client or PhylloClient(self.settings)
 
     def get_current(self, *, current: CurrentMembership) -> dict[str, Any] | None:
         row = self.db.execute(
@@ -210,6 +225,296 @@ class SocialOnboardingService:
             },
         ).mappings().first()
         if row is None:
+            raise HTTPException(status_code=404, detail="Onboarding nao encontrado")
+
+        job = self._enqueue_diagnostic_job(
+            current=current,
+            session_id=session_id,
+            analysis_version=int(row["analysis_version"]),
+            commit=False,
+        )
+        self.db.commit()
+        return self._with_references(dict(row)), job
+
+    def create_phyllo_connect_token(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+    ) -> dict[str, Any]:
+        session = self._get_session(current=current, session_id=session_id)
+        if session["status"] == "analyzing":
+            raise HTTPException(status_code=409, detail="Diagnostico ja esta em andamento")
+
+        phyllo_user = self._get_or_create_phyllo_user(current=current)
+        products = self.settings.phyllo_products_list or ["IDENTITY"]
+        token_payload = self._call_phyllo(
+            lambda: self.phyllo_client.create_sdk_token(
+                user_id=str(phyllo_user["phyllo_user_id"]),
+                products=products,
+            )
+        )
+        sdk_token = _extract_sdk_token(token_payload or {})
+        if not sdk_token:
+            raise HTTPException(status_code=502, detail="Phyllo nao retornou token do SDK")
+
+        updated = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET status = 'connecting',
+                    connection_mode = 'oauth',
+                    progress_steps = CAST(:progress_steps AS jsonb),
+                    error_code = NULL,
+                    error_message = NULL,
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status <> 'archived'
+                RETURNING id
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "membership_id": str(current.membership_id),
+                "progress_steps": json.dumps(_connecting_progress()),
+            },
+        ).first()
+        if updated is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Onboarding nao encontrado")
+        self.db.commit()
+        return {
+            "user_id": str(phyllo_user["phyllo_user_id"]),
+            "sdk_token": sdk_token,
+            "environment": self.settings.phyllo_environment,
+            "client_display_name": self.settings.phyllo_connect_display_name,
+            "work_platform_id": self.settings.phyllo_instagram_work_platform_id,
+            "products": products,
+        }
+
+    def complete_phyllo_connection(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+        phyllo_user_id: str,
+        account_id: str,
+        work_platform_id: str | None,
+    ) -> tuple[dict[str, Any], JobRecord]:
+        phyllo_user = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_phyllo_users
+                WHERE tenant_id = :tenant_id
+                  AND environment = :environment
+                  AND phyllo_user_id = :phyllo_user_id
+                  AND status = 'active'
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "environment": self.settings.phyllo_environment,
+                "phyllo_user_id": phyllo_user_id,
+            },
+        ).mappings().first()
+        if phyllo_user is None:
+            raise HTTPException(status_code=404, detail="Usuario Phyllo nao encontrado")
+
+        account_payload = self._call_phyllo(lambda: self.phyllo_client.get_account(account_id))
+        account = _unwrap_data(account_payload or {})
+        profiles = self._call_phyllo(
+            lambda: self.phyllo_client.list_profiles(account_id=account_id)
+        )
+        profile = _unwrap_data(profiles[0]) if profiles else {}
+
+        payload_user_id = _pick_text(account, profile, keys=("user_id", "phyllo_user_id"))
+        if payload_user_id and payload_user_id != phyllo_user_id:
+            raise HTTPException(status_code=409, detail="Conta Phyllo nao pertence ao usuario")
+
+        phyllo_account_id = str(account.get("id") or account_id)
+        effective_work_platform_id = (
+            work_platform_id
+            or _pick_text(account, profile, keys=("work_platform_id", "platform_id"))
+            or self.settings.phyllo_instagram_work_platform_id
+        )
+        provider = _provider_from_phyllo(
+            work_platform_id=effective_work_platform_id,
+            account=account,
+            instagram_work_platform_id=self.settings.phyllo_instagram_work_platform_id,
+        )
+        handle = _normalize_handle(
+            _pick_text(
+                account,
+                profile,
+                keys=("platform_username", "username", "handle", "screen_name"),
+            )
+            or phyllo_account_id[:12]
+        )
+        display_name = (
+            _pick_text(
+                account,
+                profile,
+                keys=("full_name", "display_name", "name", "platform_profile_name"),
+            )
+            or handle
+        )
+        profile_url = _pick_text(account, profile, keys=("profile_url", "url", "account_url"))
+        phyllo_profile_id = _pick_text(profile, keys=("id", "profile_id"))
+        account_status = _pick_text(
+            account,
+            profile,
+            keys=("status", "account_status", "connection_status"),
+        )
+        snapshot = {
+            "provider": provider,
+            "handle": handle,
+            "display_name": display_name,
+            "profile_url": profile_url,
+            "followers_count": _pick_number(
+                account,
+                profile,
+                keys=("followers_count", "follower_count", "followers", "subscribers_count"),
+            ),
+            "posts_count": _pick_number(
+                account,
+                profile,
+                keys=("posts_count", "post_count", "media_count", "content_count"),
+            ),
+            "average_engagement_rate": _pick_number(
+                account,
+                profile,
+                keys=("average_engagement_rate", "engagement_rate"),
+                as_float=True,
+            ),
+            "source": "phyllo",
+            "connection_mode": "oauth",
+            "phyllo_user_id": phyllo_user_id,
+            "phyllo_account_id": phyllo_account_id,
+            "phyllo_profile_id": phyllo_profile_id,
+            "work_platform_id": effective_work_platform_id,
+            "account_status": account_status,
+        }
+
+        self.db.execute(
+            text(
+                """
+                INSERT INTO social_phyllo_accounts (
+                  tenant_id,
+                  onboarding_session_id,
+                  environment,
+                  phyllo_user_id,
+                  phyllo_account_id,
+                  phyllo_profile_id,
+                  work_platform_id,
+                  provider,
+                  handle,
+                  display_name,
+                  profile_url,
+                  account_status,
+                  raw_account,
+                  raw_profile,
+                  last_synced_at
+                )
+                VALUES (
+                  :tenant_id,
+                  :session_id,
+                  :environment,
+                  :phyllo_user_id,
+                  :phyllo_account_id,
+                  :phyllo_profile_id,
+                  :work_platform_id,
+                  :provider,
+                  :handle,
+                  :display_name,
+                  :profile_url,
+                  :account_status,
+                  CAST(:raw_account AS jsonb),
+                  CAST(:raw_profile AS jsonb),
+                  NOW()
+                )
+                ON CONFLICT (
+                  tenant_id,
+                  environment,
+                  phyllo_account_id
+                )
+                DO UPDATE SET
+                  onboarding_session_id = EXCLUDED.onboarding_session_id,
+                  phyllo_profile_id = EXCLUDED.phyllo_profile_id,
+                  work_platform_id = EXCLUDED.work_platform_id,
+                  provider = EXCLUDED.provider,
+                  handle = EXCLUDED.handle,
+                  display_name = EXCLUDED.display_name,
+                  profile_url = EXCLUDED.profile_url,
+                  account_status = EXCLUDED.account_status,
+                  raw_account = EXCLUDED.raw_account,
+                  raw_profile = EXCLUDED.raw_profile,
+                  last_synced_at = NOW(),
+                  updated_at = NOW()
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "environment": self.settings.phyllo_environment,
+                "phyllo_user_id": phyllo_user_id,
+                "phyllo_account_id": phyllo_account_id,
+                "phyllo_profile_id": phyllo_profile_id,
+                "work_platform_id": effective_work_platform_id,
+                "provider": provider,
+                "handle": handle,
+                "display_name": display_name,
+                "profile_url": profile_url,
+                "account_status": account_status,
+                "raw_account": json.dumps(account),
+                "raw_profile": json.dumps(profile),
+            },
+        )
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET status = 'analyzing',
+                    primary_provider = :provider,
+                    connection_mode = 'oauth',
+                    connected_account_id = :account_id,
+                    connected_account_handle = :handle,
+                    connected_account_name = :display_name,
+                    profile_url = :profile_url,
+                    profile_snapshot = CAST(:profile_snapshot AS jsonb),
+                    progress_steps = CAST(:progress_steps AS jsonb),
+                    analysis_started_at = NOW(),
+                    analysis_completed_at = NULL,
+                    analysis_report = NULL,
+                    analysis_version = analysis_version + 1,
+                    error_code = NULL,
+                    error_message = NULL,
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status <> 'archived'
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "membership_id": str(current.membership_id),
+                "provider": provider,
+                "account_id": phyllo_account_id,
+                "handle": handle,
+                "display_name": display_name,
+                "profile_url": profile_url,
+                "profile_snapshot": json.dumps(snapshot),
+                "progress_steps": json.dumps(_analysis_progress()),
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
             raise HTTPException(status_code=404, detail="Onboarding nao encontrado")
 
         job = self._enqueue_diagnostic_job(
@@ -531,6 +836,92 @@ class SocialOnboardingService:
             commit=commit,
         )
 
+    def _get_or_create_phyllo_user(self, *, current: CurrentMembership) -> dict[str, Any]:
+        environment = self.settings.phyllo_environment
+        self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+            {"lock_key": f"phyllo:{environment}:{current.tenant_id}"},
+        )
+        existing = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_phyllo_users
+                WHERE tenant_id = :tenant_id
+                  AND environment = :environment
+                  AND status = 'active'
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "environment": environment},
+        ).mappings().first()
+        if existing is not None:
+            return dict(existing)
+
+        external_id = f"labby:tenant:{current.tenant_id}:social-onboarding"
+        remote_user = self._call_phyllo(
+            lambda: self.phyllo_client.get_user_by_external_id(external_id)
+        )
+        if remote_user is None:
+            remote_user = self._call_phyllo(
+                lambda: self.phyllo_client.create_user(
+                    name=current.nome or current.email,
+                    external_id=external_id,
+                )
+            )
+        phyllo_user_id = _pick_text(remote_user or {}, keys=("id", "user_id"))
+        if not phyllo_user_id:
+            raise HTTPException(status_code=502, detail="Phyllo nao retornou user_id")
+
+        row = self.db.execute(
+            text(
+                """
+                INSERT INTO social_phyllo_users (
+                  tenant_id,
+                  created_by_membership_id,
+                  environment,
+                  phyllo_user_id,
+                  external_id,
+                  metadata_json
+                )
+                VALUES (
+                  :tenant_id,
+                  :membership_id,
+                  :environment,
+                  :phyllo_user_id,
+                  :external_id,
+                  CAST(:metadata_json AS jsonb)
+                )
+                ON CONFLICT (tenant_id, environment)
+                DO UPDATE SET
+                  phyllo_user_id = EXCLUDED.phyllo_user_id,
+                  external_id = EXCLUDED.external_id,
+                  status = 'active',
+                  metadata_json = EXCLUDED.metadata_json,
+                  updated_at = NOW()
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "membership_id": str(current.membership_id),
+                "environment": environment,
+                "phyllo_user_id": phyllo_user_id,
+                "external_id": external_id,
+                "metadata_json": json.dumps(remote_user or {}),
+            },
+        ).mappings().one()
+        return dict(row)
+
+    def _call_phyllo(self, operation):
+        try:
+            return operation()
+        except PhylloConfigurationError as exc:
+            self.db.rollback()
+            raise HTTPException(status_code=503, detail="Phyllo nao configurado") from exc
+        except PhylloProviderError as exc:
+            self.db.rollback()
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
     def _get_session(self, *, current: CurrentMembership, session_id: str) -> dict[str, Any]:
         row = self.db.execute(
             text(
@@ -597,6 +988,16 @@ def _initial_progress() -> list[dict[str, str]]:
     ]
 
 
+def _connecting_progress() -> list[dict[str, str]]:
+    return [
+        {"key": "objective", "label": "Objetivo", "status": "done"},
+        {"key": "connect", "label": "Conectar rede", "status": "running"},
+        {"key": "snapshot", "label": "Ler perfil", "status": "pending"},
+        {"key": "analysis", "label": "Diagnostico", "status": "pending"},
+        {"key": "report", "label": "Plano inicial", "status": "pending"},
+    ]
+
+
 def _analysis_progress() -> list[dict[str, str]]:
     return [
         {"key": "objective", "label": "Objetivo", "status": "done"},
@@ -615,6 +1016,95 @@ def _ready_progress() -> list[dict[str, str]]:
         {"key": "analysis", "label": "Diagnostico", "status": "done"},
         {"key": "report", "label": "Plano inicial", "status": "done"},
     ]
+
+
+def _extract_sdk_token(payload: dict[str, Any]) -> str | None:
+    for key in ("sdk_token", "token", "access_token"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    nested = payload.get("data")
+    if isinstance(nested, dict):
+        return _extract_sdk_token(nested)
+    return None
+
+
+def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
+    data = payload.get("data")
+    if isinstance(data, dict):
+        return data
+    return payload
+
+
+def _pick_text(*payloads: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for payload in payloads:
+        value = _find_value(payload, keys)
+        if value is None:
+            continue
+        text_value = str(value).strip()
+        if text_value:
+            return text_value
+    return None
+
+
+def _pick_number(
+    *payloads: dict[str, Any],
+    keys: tuple[str, ...],
+    as_float: bool = False,
+) -> float | int:
+    for payload in payloads:
+        value = _find_value(payload, keys)
+        if value is None:
+            continue
+        try:
+            number = float(str(value).replace("%", "").strip())
+        except (TypeError, ValueError):
+            continue
+        return number if as_float else int(number)
+    return 0.0 if as_float else 0
+
+
+def _find_value(value: Any, keys: tuple[str, ...]) -> Any:
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value and value[key] not in (None, ""):
+                return value[key]
+        for item in value.values():
+            found = _find_value(item, keys)
+            if found not in (None, ""):
+                return found
+    if isinstance(value, list):
+        for item in value:
+            found = _find_value(item, keys)
+            if found not in (None, ""):
+                return found
+    return None
+
+
+def _provider_from_phyllo(
+    *,
+    work_platform_id: str | None,
+    account: dict[str, Any],
+    instagram_work_platform_id: str,
+) -> str:
+    if work_platform_id and work_platform_id == instagram_work_platform_id:
+        return "instagram"
+    platform_text = " ".join(
+        filter(
+            None,
+            [
+                work_platform_id,
+                _pick_text(account, keys=("work_platform_name", "platform_name", "name")),
+            ],
+        )
+    ).lower()
+    if "youtube" in platform_text:
+        return "youtube"
+    if "linkedin" in platform_text:
+        return "linkedin"
+    if "twitter" in platform_text or platform_text == "x":
+        return "x"
+    return "instagram"
 
 
 def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:

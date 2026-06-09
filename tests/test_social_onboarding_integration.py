@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
@@ -21,6 +23,63 @@ pytestmark = pytest.mark.integration
 
 def make_service(db_session: Session) -> SocialOnboardingService:
     return SocialOnboardingService(db_session, job_queue=JobQueueService(db_session))
+
+
+class FakePhylloClient:
+    def __init__(self) -> None:
+        self.users_by_external_id: dict[str, dict[str, Any]] = {}
+        self.created_users = 0
+        self.created_tokens: list[dict[str, Any]] = []
+
+    def get_user_by_external_id(self, external_id: str):
+        return self.users_by_external_id.get(external_id)
+
+    def create_user(self, *, name: str, external_id: str):
+        self.created_users += 1
+        user = {
+            "id": f"phyllo-user-{self.created_users}",
+            "name": name,
+            "external_id": external_id,
+        }
+        self.users_by_external_id[external_id] = user
+        return user
+
+    def create_sdk_token(self, *, user_id: str, products: list[str]):
+        self.created_tokens.append({"user_id": user_id, "products": products})
+        return {"sdk_token": f"sdk-{user_id}"}
+
+    def get_account(self, account_id: str):
+        return {
+            "id": account_id,
+            "user_id": "phyllo-user-1",
+            "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+            "platform_username": "MinhaMarca",
+            "display_name": "Minha Marca",
+            "profile_url": "https://instagram.com/minhamarca",
+            "status": "connected",
+        }
+
+    def list_profiles(self, *, account_id: str):
+        return [
+            {
+                "id": "profile-1",
+                "account_id": account_id,
+                "follower_count": 4200,
+                "content_count": 96,
+                "engagement_rate": 3.4,
+            }
+        ]
+
+
+def make_phyllo_service(
+    db_session: Session,
+    phyllo_client: FakePhylloClient,
+) -> SocialOnboardingService:
+    return SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        phyllo_client=phyllo_client,
+    )
 
 
 def test_social_onboarding_rediagnose_uses_new_job_version_real_postgres(
@@ -142,6 +201,98 @@ def test_social_onboarding_cross_tenant_lookup_returns_404_for_real_row(
 
     with pytest.raises(HTTPException) as exc:
         service.get_session(current=current_one(), session_id=str(other["id"]))
+
+    assert exc.value.status_code == 404
+
+
+def test_social_onboarding_phyllo_connect_token_creates_tenant_user_once(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+
+    first = service.create_phyllo_connect_token(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+    second = service.create_phyllo_connect_token(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+
+    assert first["user_id"] == "phyllo-user-1"
+    assert first["sdk_token"] == "sdk-phyllo-user-1"
+    assert second["user_id"] == "phyllo-user-1"
+    assert phyllo.created_users == 1
+    assert phyllo.created_tokens == [
+        {"user_id": "phyllo-user-1", "products": ["IDENTITY", "ENGAGEMENT"]},
+        {"user_id": "phyllo-user-1", "products": ["IDENTITY", "ENGAGEMENT"]},
+    ]
+    status = db_session.execute(
+        text("SELECT status FROM social_onboarding_sessions WHERE id = :session_id"),
+        {"session_id": session["id"]},
+    ).scalar_one()
+    assert status == "connecting"
+
+
+def test_social_onboarding_phyllo_complete_updates_oauth_snapshot_and_job(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    connected, job = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+
+    assert connected["status"] == "analyzing"
+    assert connected["connection_mode"] == "oauth"
+    assert connected["primary_provider"] == "instagram"
+    assert connected["connected_account_handle"] == "minhamarca"
+    assert connected["profile_snapshot"]["source"] == "phyllo"
+    assert connected["profile_snapshot"]["followers_count"] == 4200
+    assert connected["analysis_version"] == 1
+    assert job.idempotency_key.endswith(":v1")
+
+    account_row = db_session.execute(
+        text(
+            """
+            SELECT provider, handle, phyllo_account_id
+            FROM social_phyllo_accounts
+            WHERE tenant_id = :tenant_id
+              AND phyllo_account_id = 'phyllo-account-1'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().one()
+    assert account_row["provider"] == "instagram"
+    assert account_row["handle"] == "minhamarca"
+
+
+def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session_one = service.create_session(current=current_one(), objective="grow_audience")
+    session_two = service.create_session(current=current_two(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session_one["id"]))
+
+    with pytest.raises(HTTPException) as exc:
+        service.complete_phyllo_connection(
+            current=current_two(),
+            session_id=str(session_two["id"]),
+            phyllo_user_id="phyllo-user-1",
+            account_id="phyllo-account-1",
+            work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        )
 
     assert exc.value.status_code == 404
 
