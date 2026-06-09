@@ -1,0 +1,534 @@
+import pytest
+from fastapi import HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.domains.jobs.job_service import JobQueueService
+from app.domains.jobs.registry import JobExecutionContext
+from app.domains.social_media import onboarding_jobs, onboarding_service
+from app.domains.social_media.onboarding_service import SocialOnboardingService
+from tests.test_sales_contacts_integration import TENANT_1, current_one, current_two
+from tests.test_sales_contacts_integration import (
+    db_session as _db_session_fixture,  # noqa: F401
+)
+from tests.test_sales_contacts_integration import (
+    migrated_engine as _migrated_engine_fixture,  # noqa: F401
+)
+
+pytestmark = pytest.mark.integration
+
+
+def make_service(db_session: Session) -> SocialOnboardingService:
+    return SocialOnboardingService(db_session, job_queue=JobQueueService(db_session))
+
+
+def test_social_onboarding_rediagnose_uses_new_job_version_real_postgres(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+
+    first, first_job = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    assert first["analysis_version"] == 1
+    assert first["connection_mode"] == "simulated"
+    assert first_job.idempotency_key.endswith(":v1")
+
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=1,
+    )
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert ready["status"] == "ready"
+
+    second, second_job = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="youtube",
+        handle="@marca_tv",
+        display_name="Marca TV",
+        profile_url=None,
+        followers_count=2500,
+        posts_count=140,
+        average_engagement_rate=3.1,
+    )
+    assert second["status"] == "analyzing"
+    assert second["analysis_version"] == 2
+    assert second_job.idempotency_key.endswith(":v2")
+    assert second_job.id != first_job.id
+
+    stale = service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=1,
+    )
+    assert stale["skipped"] is True
+    assert stale["reason"] == "stale_analysis_version"
+    still_analyzing = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert still_analyzing["status"] == "analyzing"
+
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=2,
+    )
+    rerun_ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert rerun_ready["status"] == "ready"
+    assert rerun_ready["connected_account_handle"] == "marca_tv"
+
+    job_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM jobs
+            WHERE tenant_id = :tenant_id
+              AND job_type = 'social.onboarding.diagnose'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one()
+    assert job_count == 2
+
+
+def test_social_onboarding_worker_skips_archived_session_real_postgres(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    first = service.create_session(current=current_one(), objective="grow_audience")
+    connected, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(first["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.create_session(current=current_one(), objective="sell_more")
+
+    result = service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(first["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    assert result["skipped"] is True
+    assert result["reason"] == "session_archived"
+    archived_status = db_session.execute(
+        text("SELECT status FROM social_onboarding_sessions WHERE id = :session_id"),
+        {"session_id": first["id"]},
+    ).scalar_one()
+    assert archived_status == "archived"
+
+
+def test_social_onboarding_cross_tenant_lookup_returns_404_for_real_row(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    other = service.create_session(current=current_two(), objective="benchmarking")
+
+    with pytest.raises(HTTPException) as exc:
+        service.get_session(current=current_one(), session_id=str(other["id"]))
+
+    assert exc.value.status_code == 404
+
+
+def test_social_onboarding_diagnose_requires_connected_profile(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="authority")
+
+    with pytest.raises(HTTPException) as exc:
+        service.enqueue_diagnostic(current=current_one(), session_id=str(session["id"]))
+
+    assert exc.value.status_code == 400
+
+
+def test_social_onboarding_diagnose_rejects_already_analyzing_session(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="authority")
+    service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service.enqueue_diagnostic(current=current_one(), session_id=str(session["id"]))
+
+    assert exc.value.status_code == 409
+
+
+def test_social_onboarding_create_archives_previous_current_session(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    first = service.create_session(current=current_one(), objective="grow_audience")
+    second = service.create_session(current=current_one(), objective="sell_more")
+
+    first_status = db_session.execute(
+        text("SELECT status FROM social_onboarding_sessions WHERE id = :session_id"),
+        {"session_id": first["id"]},
+    ).scalar_one()
+    current = service.get_current(current=current_one())
+
+    assert first_status == "archived"
+    assert current is not None
+    assert current["id"] == second["id"]
+    assert current["objective"] == "sell_more"
+
+
+def test_social_onboarding_job_rolls_back_retryable_db_error_without_marking_failed(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="authority")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+
+    class ExistingSessionContext:
+        def __enter__(self) -> Session:
+            return db_session
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    monkeypatch.setattr(onboarding_jobs, "SessionLocal", lambda: ExistingSessionContext())
+    monkeypatch.setattr(onboarding_service, "_build_report", lambda *_args: {"bad": "\x00"})
+
+    with pytest.raises(SQLAlchemyError):
+        onboarding_jobs.diagnose_social_onboarding(
+            JobExecutionContext(
+                job_id="job",
+                tenant_id=str(TENANT_1),
+                membership_id=None,
+                job_type="social.onboarding.diagnose",
+                queue_name="worker-social-analysis",
+                payload={
+                    "session_id": str(session["id"]),
+                    "analysis_version": analyzing["analysis_version"],
+                },
+                attempts=1,
+            )
+        )
+
+    still_analyzing = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert still_analyzing["status"] == "analyzing"
+    assert still_analyzing["error_code"] is None
+
+
+def test_social_onboarding_retryable_failure_can_succeed_on_second_attempt(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="authority")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+
+    class ExistingSessionContext:
+        def __enter__(self) -> Session:
+            return db_session
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    original_build_report = onboarding_service._build_report
+    calls = {"count": 0}
+
+    def flaky_build_report(*args, **kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("provider temporarily unavailable")
+        return original_build_report(*args, **kwargs)
+
+    monkeypatch.setattr(onboarding_jobs, "SessionLocal", lambda: ExistingSessionContext())
+    monkeypatch.setattr(onboarding_service, "_build_report", flaky_build_report)
+
+    with pytest.raises(RuntimeError):
+        onboarding_jobs.diagnose_social_onboarding(
+            JobExecutionContext(
+                job_id="job-1",
+                tenant_id=str(TENANT_1),
+                membership_id=None,
+                job_type="social.onboarding.diagnose",
+                queue_name="worker-social-analysis",
+                payload={
+                    "session_id": str(session["id"]),
+                    "analysis_version": analyzing["analysis_version"],
+                },
+                attempts=1,
+            )
+        )
+    after_first = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert after_first["status"] == "analyzing"
+    assert after_first["error_code"] is None
+
+    result = onboarding_jobs.diagnose_social_onboarding(
+        JobExecutionContext(
+            job_id="job-1",
+            tenant_id=str(TENANT_1),
+            membership_id=None,
+            job_type="social.onboarding.diagnose",
+            queue_name="worker-social-analysis",
+            payload={
+                "session_id": str(session["id"]),
+                "analysis_version": analyzing["analysis_version"],
+            },
+            attempts=2,
+        )
+    )
+
+    assert result["status"] == "ready"
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert ready["status"] == "ready"
+    assert ready["error_code"] is None
+
+
+def test_social_onboarding_failed_mark_is_version_scoped(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    first, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=first["analysis_version"],
+    )
+    second, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="youtube",
+        handle="@marca_tv",
+        display_name="Marca TV",
+        profile_url=None,
+        followers_count=2200,
+        posts_count=120,
+        average_engagement_rate=2.8,
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=second["analysis_version"],
+    )
+
+    service.mark_diagnostic_failed(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=first["analysis_version"],
+        error_code="stale",
+        error_message="old job failed late",
+    )
+
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert ready["status"] == "ready"
+    assert ready["analysis_version"] == second["analysis_version"]
+    assert ready["error_code"] is None
+
+
+def test_social_onboarding_failed_mark_does_not_touch_newer_analyzing_version(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    first, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    second, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="youtube",
+        handle="@marca_tv",
+        display_name="Marca TV",
+        profile_url=None,
+        followers_count=2200,
+        posts_count=120,
+        average_engagement_rate=2.8,
+    )
+
+    service.mark_diagnostic_failed(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=first["analysis_version"],
+        error_code="stale",
+        error_message="old job failed late",
+    )
+
+    analyzing = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert analyzing["status"] == "analyzing"
+    assert analyzing["analysis_version"] == second["analysis_version"]
+    assert analyzing["error_code"] is None
+
+
+def test_social_onboarding_reconciler_marks_stale_analyzing_failed(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    stale = service.create_session(current=current_one(), objective="grow_audience")
+    _connected, job = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(stale["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE jobs
+            SET status = 'dead_letter',
+                updated_at = NOW()
+            WHERE id = :job_id
+            """
+        ),
+        {"job_id": job.id},
+    )
+    db_session.commit()
+
+    reconciled = service.reconcile_abandoned_analyses(
+        limit=10,
+    )
+
+    assert len(reconciled) == 1
+    failed = service.get_session(current=current_one(), session_id=str(stale["id"]))
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "analysis_abandoned"
+
+
+def test_social_onboarding_reconciler_does_not_fail_old_pending_job(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    pending = service.create_session(current=current_one(), objective="grow_audience")
+    service.connect_fake_account(
+        current=current_one(),
+        session_id=str(pending["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE social_onboarding_sessions
+            SET analysis_started_at = NOW() - INTERVAL '2 hours'
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": pending["id"]},
+    )
+    db_session.commit()
+
+    reconciled = service.reconcile_abandoned_analyses(
+        limit=10,
+    )
+
+    assert reconciled == []
+    still_analyzing = service.get_session(current=current_one(), session_id=str(pending["id"]))
+    assert still_analyzing["status"] == "analyzing"
+    assert still_analyzing["error_code"] is None
+
+
+def test_social_onboarding_worker_does_not_flip_failed_session_to_ready(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.mark_diagnostic_failed(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=analyzing["analysis_version"],
+        error_code="analysis_abandoned",
+        error_message="timed out",
+    )
+
+    result = service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=analyzing["analysis_version"],
+    )
+
+    assert result["skipped"] is True
+    assert result["reason"] == "session_not_analyzing"
+    failed = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert failed["status"] == "failed"
+    assert failed["error_code"] == "analysis_abandoned"

@@ -20,15 +20,24 @@ celery_app.conf.update(
         "app.domains.sales.outbound_jobs",
         "app.domains.sales.webhook_jobs",
         "app.domains.social_media.news_jobs",
+        "app.domains.social_media.onboarding_jobs",
     ),
     task_track_started=True,
     task_time_limit=60 * 15,
     task_soft_time_limit=60 * 10,
     worker_prefetch_multiplier=1,
     beat_schedule={
+        "dispatch-due-jobs": {
+            "task": "labby.jobs.dispatch_due_jobs",
+            "schedule": settings.job_dispatch_interval_seconds,
+        },
         "cleanup-operational-history": {
             "task": "labby.jobs.cleanup_operational_history",
             "schedule": settings.operational_history_cleanup_interval_seconds,
+        },
+        "reconcile-abandoned-social-onboarding-analyses": {
+            "task": "labby.social_onboarding.reconcile_abandoned_analyses",
+            "schedule": settings.social_onboarding_reconciler_interval_seconds,
         },
     },
 )

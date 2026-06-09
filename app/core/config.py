@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     ai_timeout_seconds: float = 30.0
     ai_input_cost_per_million_tokens: float = 0.0
     ai_output_cost_per_million_tokens: float = 0.0
+    job_dispatch_interval_seconds: int = 30
     job_running_timeout_seconds: int = 900
     job_reaper_batch_size: int = 50
     public_rate_limit_backend: Literal["database", "redis"] = "database"
@@ -61,6 +62,8 @@ class Settings(BaseSettings):
     social_news_posts_per_source: int = 20
     social_news_capture_limit: int = 30
     social_news_rank_limit: int = 5
+    social_onboarding_reconciler_batch_size: int = 100
+    social_onboarding_reconciler_interval_seconds: int = 300
     allowed_origins: str = (
         "http://localhost:3000,http://localhost:3001,https://app.labby.com.br"
     )

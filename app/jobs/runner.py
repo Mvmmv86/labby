@@ -11,6 +11,7 @@ from app.domains.jobs.registry import (
     RetryableJobError,
     job_handlers,
 )
+from app.domains.social_media.onboarding_service import SocialOnboardingService
 
 
 def process_due_jobs(
@@ -137,6 +138,17 @@ def cleanup_operational_history() -> dict[str, int]:
         "rate_limit_events_deleted": result.rate_limit_events_deleted,
         "dispatch_attempts_deleted": result.dispatch_attempts_deleted,
     }
+
+
+@celery_app.task(name="labby.social_onboarding.reconcile_abandoned_analyses")
+def reconcile_abandoned_social_onboarding_analyses() -> dict[str, int]:
+    settings = get_settings()
+    with SessionLocal() as db:
+        service = SocialOnboardingService(db, job_queue=JobQueueService(db))
+        rows = service.reconcile_abandoned_analyses(
+            limit=settings.social_onboarding_reconciler_batch_size,
+        )
+    return {"failed": len(rows)}
 
 
 def _execution_context(job: JobRecord) -> JobExecutionContext:

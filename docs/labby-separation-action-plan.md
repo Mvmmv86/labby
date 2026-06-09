@@ -174,6 +174,30 @@ Exemplos:
 - refresh de token repetido;
 - captura de post/comentario duplicado.
 
+### 6. Design system e UX operacional
+
+Todo fluxo novo da Labby deve seguir fielmente o design system atual da
+plataforma:
+
+- interface dark, limpa, densa e operacional;
+- tipografia pequena, hierarquia discreta e leitura rapida;
+- componentes existentes antes de criar novos padroes;
+- cards apenas quando forem itens, paineis ou ferramentas reais;
+- nada de hero, landing page, texto grande ou layout marketing dentro do app;
+- estados vazios sempre com proximo passo claro;
+- fluxo social com foco em primeiro valor rapido, nao em explicacao longa;
+- controles familiares: tabs, segmented controls, botoes com icones, inputs,
+  switches, menus e badges pequenos;
+- telas responsivas sem sobreposicao de texto, botoes ou paineis;
+- qualquer divergencia visual precisa ser tratada como regressao de produto.
+
+Gate de UX:
+
+- primeira jornada social parece parte nativa da Labby atual;
+- fonte, espacamento, botoes, sidebar, topbar e estados seguem o app existente;
+- onboarding nao deixa dashboard vazio sem acao;
+- usuario entende o proximo passo sem tutorial longo.
+
 ## Topologia de producao recomendada
 
 Sem Docker como requisito.
@@ -783,6 +807,55 @@ Objetivo: expandir a Labby para social media parruda sem atrasar a separacao.
 
 Este trilho so comeca depois do A6, exceto por decisoes de schema que sejam
 baratas e nao bloqueiem a separacao.
+
+### B0 - Jornada inicial social e contrato UX/backend
+
+Objetivo: desenhar a primeira experiencia do cliente social antes de construir
+as integracoes completas, preservando o design system atual e definindo o
+contrato de dados que o backend precisa entregar.
+
+Fluxo alvo:
+
+1. cliente entra no app;
+2. informa objetivo principal: crescer audiencia, vender mais, melhorar
+   autoridade, organizar conteudo ou analisar referencias;
+3. conecta uma primeira rede social com escopo minimo de leitura/analytics;
+4. acompanha progresso do diagnostico em etapas pequenas;
+5. informa perfis de referencia/concorrentes que quer acompanhar ou imitar como
+   benchmark editorial;
+6. recebe diagnostico profissional do perfil;
+7. revisa segmento, publico-alvo, tom de voz e pilares sugeridos;
+8. so depois conecta novas redes ou gera calendario/conteudo.
+
+Regras de UX:
+
+- seguir exatamente o visual atual da Labby: dark, limpo, denso, tipografia
+  pequena e sem composicao de landing page;
+- usar empty states como parte do onboarding, sempre com CTA operacional;
+- nao pedir todas as permissoes no primeiro contato;
+- nao mostrar dashboard vazio enquanto a analise ainda nao terminou;
+- mostrar demo/skeleton de valor enquanto jobs processam dados reais;
+- separar claramente: minha conta, referencias/benchmarks e concorrentes;
+- explicar cada permissao com texto curto e objetivo.
+
+Contrato backend minimo:
+
+- criar sessao de onboarding tenant-scoped;
+- registrar objetivo declarado pelo cliente;
+- iniciar OAuth de uma rede por vez;
+- criar jobs de descoberta, captura, metricas e analise;
+- persistir status granular do diagnostico;
+- devolver relatorio versionado e revisavel pelo humano;
+- permitir repetir diagnostico sem duplicar coleta ou custo.
+
+Gate:
+
+- primeira tela social nao quebra o design system;
+- primeiro valor acontece com uma rede conectada;
+- backend nao executa analise pesada na request;
+- jobs sao idempotentes;
+- estado de onboarding sobrevive a reload, retry e troca de instancia;
+- testes cobrem tenant A nao acessando diagnostico do tenant B.
 
 ### B1 - Fundacao de integracoes sociais multi-rede
 

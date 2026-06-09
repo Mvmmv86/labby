@@ -13,6 +13,7 @@ from app.api.v2.labby import (
     sales_conversations,
     sales_webhooks,
     social_news,
+    social_onboarding,
     team,
 )
 
@@ -29,4 +30,5 @@ router.include_router(sales_contacts.router)
 router.include_router(sales_conversations.router)
 router.include_router(sales_webhooks.router)
 router.include_router(social_news.router)
+router.include_router(social_onboarding.router)
 router.include_router(team.router)
