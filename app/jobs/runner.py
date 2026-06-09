@@ -11,6 +11,11 @@ from app.domains.jobs.registry import (
     RetryableJobError,
     job_handlers,
 )
+from app.domains.sales import campaign_jobs as _campaign_jobs  # noqa: F401
+from app.domains.sales import outbound_jobs as _outbound_jobs  # noqa: F401
+from app.domains.sales import webhook_jobs as _webhook_jobs  # noqa: F401
+from app.domains.social_media import news_jobs as _news_jobs  # noqa: F401
+from app.domains.social_media import onboarding_jobs as _onboarding_jobs  # noqa: F401
 from app.domains.social_media.onboarding_service import SocialOnboardingService
 
 
