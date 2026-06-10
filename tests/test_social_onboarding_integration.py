@@ -10,6 +10,7 @@ from app.domains.jobs.job_service import JobQueueService
 from app.domains.jobs.registry import JobExecutionContext
 from app.domains.social_media import onboarding_jobs, onboarding_service
 from app.domains.social_media.onboarding_service import SocialOnboardingService
+from app.integrations.phyllo import PhylloProviderError
 from tests.test_sales_contacts_integration import TENANT_1, current_one, current_two
 from tests.test_sales_contacts_integration import (
     db_session as _db_session_fixture,  # noqa: F401
@@ -30,6 +31,9 @@ class FakePhylloClient:
         self.users_by_external_id: dict[str, dict[str, Any]] = {}
         self.created_users = 0
         self.created_tokens: list[dict[str, Any]] = []
+        self.accounts_by_user_id: dict[str, list[dict[str, Any]]] = {}
+        self.accounts_by_id: dict[str, dict[str, Any]] = {}
+        self.list_accounts_errors: set[str] = set()
 
     def get_user_by_external_id(self, external_id: str):
         return self.users_by_external_id.get(external_id)
@@ -49,15 +53,20 @@ class FakePhylloClient:
         return {"sdk_token": f"sdk-{user_id}"}
 
     def get_account(self, account_id: str):
-        return {
+        return self.accounts_by_id.get(account_id) or {
             "id": account_id,
-            "user_id": "phyllo-user-1",
+            "user": {"id": "phyllo-user-1"},
             "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
             "platform_username": "MinhaMarca",
             "display_name": "Minha Marca",
             "profile_url": "https://instagram.com/minhamarca",
             "status": "connected",
         }
+
+    def list_accounts(self, *, user_id: str):
+        if user_id in self.list_accounts_errors:
+            raise PhylloProviderError("Phyllo temporariamente indisponivel")
+        return self.accounts_by_user_id.get(user_id, [])
 
     def list_profiles(self, *, account_id: str):
         return [
@@ -295,6 +304,260 @@ def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(
         )
 
     assert exc.value.status_code == 404
+
+
+def test_social_onboarding_phyllo_complete_rejects_missing_owner(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    phyllo.accounts_by_id["phyllo-account-ownerless"] = {
+        "id": "phyllo-account-ownerless",
+        "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        "platform_username": "SemDono",
+    }
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    with pytest.raises(HTTPException) as exc:
+        service.complete_phyllo_connection(
+            current=current_one(),
+            session_id=str(session["id"]),
+            phyllo_user_id="phyllo-user-1",
+            account_id="phyllo-account-ownerless",
+            work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        )
+
+    assert exc.value.status_code == 409
+    account_count = db_session.execute(
+        text("SELECT COUNT(*) FROM social_phyllo_accounts WHERE tenant_id = :tenant_id"),
+        {"tenant_id": TENANT_1},
+    ).scalar_one()
+    assert account_count == 0
+
+
+def test_social_onboarding_phyllo_complete_rejects_wrong_owner(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    phyllo.accounts_by_id["phyllo-account-other"] = {
+        "id": "phyllo-account-other",
+        "user": {"id": "phyllo-user-other"},
+        "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        "platform_username": "OutraConta",
+    }
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    with pytest.raises(HTTPException) as exc:
+        service.complete_phyllo_connection(
+            current=current_one(),
+            session_id=str(session["id"]),
+            phyllo_user_id="phyllo-user-1",
+            account_id="phyllo-account-other",
+            work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_social_onboarding_fake_connect_rejects_oauth_in_progress(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    with pytest.raises(HTTPException) as exc:
+        service.connect_fake_account(
+            current=current_one(),
+            session_id=str(session["id"]),
+            provider="instagram",
+            handle="@simulado",
+            display_name="Simulado",
+            profile_url=None,
+            followers_count=1,
+            posts_count=1,
+            average_engagement_rate=1.0,
+        )
+
+    assert exc.value.status_code == 409
+
+
+def test_social_onboarding_reconciles_phyllo_connecting_session(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    phyllo.accounts_by_user_id["phyllo-user-1"] = [{"id": "phyllo-account-recovered"}]
+    phyllo.accounts_by_id["phyllo-account-recovered"] = {
+        "id": "phyllo-account-recovered",
+        "user": {"id": "phyllo-user-1"},
+        "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        "platform_username": "Recuperado",
+        "display_name": "Perfil Recuperado",
+        "status": "connected",
+    }
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    reconciled = service.reconcile_phyllo_connecting_sessions(limit=10)
+
+    assert len(reconciled) == 1
+    assert reconciled[0]["session_id"] == str(session["id"])
+    assert reconciled[0]["status"] == "analyzing"
+    assert reconciled[0]["job_id"]
+    row = db_session.execute(
+        text(
+            """
+            SELECT status, connection_mode, connected_account_handle
+            FROM social_onboarding_sessions
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": session["id"]},
+    ).mappings().one()
+    assert row["status"] == "analyzing"
+    assert row["connection_mode"] == "oauth"
+    assert row["connected_account_handle"] == "recuperado"
+
+
+def test_social_onboarding_reconciler_isolates_candidate_phyllo_failures(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    first = service.create_session(current=current_one(), objective="grow_audience")
+    second = service.create_session(current=current_two(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(first["id"]))
+    service.create_phyllo_connect_token(current=current_two(), session_id=str(second["id"]))
+    phyllo.list_accounts_errors.add("phyllo-user-1")
+    phyllo.accounts_by_user_id["phyllo-user-2"] = [{"id": "phyllo-account-second"}]
+    phyllo.accounts_by_id["phyllo-account-second"] = {
+        "id": "phyllo-account-second",
+        "user": {"id": "phyllo-user-2"},
+        "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        "platform_username": "SegundoPerfil",
+        "display_name": "Segundo Perfil",
+        "status": "connected",
+    }
+
+    reconciled = service.reconcile_phyllo_connecting_sessions(limit=10)
+
+    assert len(reconciled) == 1
+    assert reconciled[0]["session_id"] == str(second["id"])
+    first_status = db_session.execute(
+        text("SELECT status FROM social_onboarding_sessions WHERE id = :session_id"),
+        {"session_id": first["id"]},
+    ).scalar_one()
+    second_row = db_session.execute(
+        text(
+            """
+            SELECT status, connected_account_handle
+            FROM social_onboarding_sessions
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": second["id"]},
+    ).mappings().one()
+    assert first_status == "connecting"
+    assert second_row["status"] == "analyzing"
+    assert second_row["connected_account_handle"] == "segundoperfil"
+
+
+def test_social_onboarding_reconciler_prefers_connected_instagram_account(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+    phyllo.accounts_by_user_id["phyllo-user-1"] = [
+        {
+            "id": "phyllo-expired-instagram",
+            "status": "SESSION_EXPIRED",
+            "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        },
+        {
+            "id": "phyllo-connected-youtube",
+            "status": "CONNECTED",
+            "work_platform_id": "youtube-platform",
+        },
+        {
+            "id": "phyllo-connected-instagram",
+            "status": "CONNECTED",
+            "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        },
+    ]
+    phyllo.accounts_by_id["phyllo-connected-youtube"] = {
+        "id": "phyllo-connected-youtube",
+        "user": {"id": "phyllo-user-1"},
+        "work_platform_id": "youtube-platform",
+        "platform_username": "YoutubeErrado",
+        "display_name": "YouTube Errado",
+        "status": "connected",
+    }
+    phyllo.accounts_by_id["phyllo-connected-instagram"] = {
+        "id": "phyllo-connected-instagram",
+        "user": {"id": "phyllo-user-1"},
+        "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        "platform_username": "InstagramCerto",
+        "display_name": "Instagram Certo",
+        "status": "connected",
+    }
+
+    reconciled = service.reconcile_phyllo_connecting_sessions(limit=10)
+
+    assert len(reconciled) == 1
+    row = db_session.execute(
+        text(
+            """
+            SELECT connected_account_id, connected_account_handle
+            FROM social_onboarding_sessions
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": session["id"]},
+    ).mappings().one()
+    assert row["connected_account_id"] == "phyllo-connected-instagram"
+    assert row["connected_account_handle"] == "instagramcerto"
+
+
+def test_social_onboarding_reconciler_expires_old_phyllo_connection(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+    db_session.execute(
+        text(
+            """
+            UPDATE social_onboarding_sessions
+            SET updated_at = NOW() - INTERVAL '31 minutes'
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": session["id"]},
+    )
+    db_session.commit()
+
+    reconciled = service.reconcile_phyllo_connecting_sessions(limit=10)
+
+    assert reconciled == [
+        {
+            "session_id": str(session["id"]),
+            "status": "failed",
+            "reason": "phyllo_connection_timeout",
+        }
+    ]
+    status = db_session.execute(
+        text("SELECT status FROM social_onboarding_sessions WHERE id = :session_id"),
+        {"session_id": session["id"]},
+    ).scalar_one()
+    assert status == "failed"
 
 
 def test_social_onboarding_diagnose_requires_connected_profile(

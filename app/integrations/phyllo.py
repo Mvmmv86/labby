@@ -1,3 +1,5 @@
+import time
+from functools import lru_cache
 from typing import Any
 
 import httpx
@@ -11,6 +13,9 @@ class PhylloConfigurationError(Exception):
 
 class PhylloProviderError(Exception):
     pass
+
+
+_GET_RETRY_DELAYS_SECONDS = (0.2, 0.5)
 
 
 class PhylloClient:
@@ -41,6 +46,14 @@ class PhylloClient:
     def get_account(self, account_id: str) -> dict[str, Any]:
         return self._request("GET", f"/v1/accounts/{account_id}")
 
+    def list_accounts(self, *, user_id: str) -> list[dict[str, Any]]:
+        payload = self._request(
+            "GET",
+            "/v1/accounts",
+            params={"user_id": user_id},
+        )
+        return _extract_collection(payload)
+
     def list_profiles(self, *, account_id: str) -> list[dict[str, Any]]:
         payload = self._request(
             "GET",
@@ -62,14 +75,16 @@ class PhylloClient:
             raise PhylloConfigurationError("LABBY_PHYLLO_CLIENT_ID/SECRET nao configurados")
 
         base_url = self.settings.phyllo_api_base_url.rstrip("/")
-        try:
-            with httpx.Client(
-                timeout=self.settings.phyllo_timeout_seconds,
-                auth=httpx.BasicAuth(
-                    self.settings.phyllo_client_id,
-                    self.settings.phyllo_client_secret,
-                ),
-            ) as client:
+        client = _get_http_client(
+            base_url=base_url,
+            timeout_seconds=self.settings.phyllo_timeout_seconds,
+            client_id=self.settings.phyllo_client_id,
+            client_secret=self.settings.phyllo_client_secret,
+        )
+        attempts = 1 + (len(_GET_RETRY_DELAYS_SECONDS) if method.upper() == "GET" else 0)
+        response: httpx.Response | None = None
+        for attempt in range(attempts):
+            try:
                 response = client.request(
                     method,
                     f"{base_url}{path}",
@@ -77,8 +92,17 @@ class PhylloClient:
                     params=params,
                     headers={"Content-Type": "application/json"},
                 )
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise PhylloProviderError("Phyllo indisponivel") from exc
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                if attempt == attempts - 1:
+                    raise PhylloProviderError("Phyllo indisponivel") from exc
+                time.sleep(_GET_RETRY_DELAYS_SECONDS[attempt])
+                continue
+            if response.status_code < 500 or attempt == attempts - 1:
+                break
+            time.sleep(_GET_RETRY_DELAYS_SECONDS[attempt])
+
+        if response is None:
+            raise PhylloProviderError("Phyllo indisponivel")
 
         if response.status_code == 404 and allow_not_found:
             return None
@@ -90,6 +114,20 @@ class PhylloClient:
             )
             raise PhylloProviderError(message)
         return payload
+
+
+@lru_cache(maxsize=8)
+def _get_http_client(
+    *,
+    base_url: str,
+    timeout_seconds: float,
+    client_id: str,
+    client_secret: str,
+) -> httpx.Client:
+    return httpx.Client(
+        timeout=timeout_seconds,
+        auth=httpx.BasicAuth(client_id, client_secret),
+    )
 
 
 def _safe_json(response: httpx.Response) -> dict[str, Any]:

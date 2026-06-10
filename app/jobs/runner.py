@@ -150,10 +150,13 @@ def reconcile_abandoned_social_onboarding_analyses() -> dict[str, int]:
     settings = get_settings()
     with SessionLocal() as db:
         service = SocialOnboardingService(db, job_queue=JobQueueService(db))
-        rows = service.reconcile_abandoned_analyses(
+        phyllo_rows = service.reconcile_phyllo_connecting_sessions(
             limit=settings.social_onboarding_reconciler_batch_size,
         )
-    return {"failed": len(rows)}
+        abandoned_rows = service.reconcile_abandoned_analyses(
+            limit=settings.social_onboarding_reconciler_batch_size,
+        )
+    return {"phyllo_reconciled": len(phyllo_rows), "failed": len(abandoned_rows)}
 
 
 def _execution_context(job: JobRecord) -> JobExecutionContext:

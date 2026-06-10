@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from typing import Any
 
 from fastapi import HTTPException
@@ -17,6 +18,8 @@ from app.integrations.phyllo import (
 
 SOCIAL_ONBOARDING_DIAGNOSE_JOB = "social.onboarding.diagnose"
 SOCIAL_ONBOARDING_QUEUE = "worker-social-analysis"
+PHYLLO_CONNECT_TIMEOUT_MINUTES = 30
+logger = logging.getLogger(__name__)
 
 PROVIDERS = {"instagram", "youtube", "x", "linkedin", "fake"}
 OBJECTIVE_LABELS = {
@@ -172,6 +175,15 @@ class SocialOnboardingService:
     ) -> tuple[dict[str, Any], JobRecord]:
         provider = _normalize_provider(provider)
         normalized_handle = _normalize_handle(handle)
+        existing = self._get_session(current=current, session_id=session_id)
+        if (
+            existing.get("connection_mode") == "oauth"
+            and existing.get("status") in {"connecting", "analyzing"}
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Conexao real em andamento; aguarde ou crie um novo diagnostico",
+            )
         profile_snapshot = {
             "provider": provider,
             "handle": normalized_handle,
@@ -304,6 +316,10 @@ class SocialOnboardingService:
         account_id: str,
         work_platform_id: str | None,
     ) -> tuple[dict[str, Any], JobRecord]:
+        session = self._get_session(current=current, session_id=session_id)
+        if session.get("status") != "connecting" or session.get("connection_mode") != "oauth":
+            raise HTTPException(status_code=409, detail="Conexao Phyllo nao esta em andamento")
+
         phyllo_user = self.db.execute(
             text(
                 """
@@ -324,15 +340,46 @@ class SocialOnboardingService:
         if phyllo_user is None:
             raise HTTPException(status_code=404, detail="Usuario Phyllo nao encontrado")
 
+        self.db.rollback()
+        account, profile = self._fetch_phyllo_account_payload(account_id=account_id)
+        return self._complete_phyllo_connection_from_payload(
+            tenant_id=str(current.tenant_id),
+            membership_id=str(current.membership_id),
+            session_id=session_id,
+            phyllo_user_id=phyllo_user_id,
+            account_id=account_id,
+            work_platform_id=work_platform_id,
+            account=account,
+            profile=profile,
+        )
+
+    def _fetch_phyllo_account_payload(
+        self,
+        *,
+        account_id: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         account_payload = self._call_phyllo(lambda: self.phyllo_client.get_account(account_id))
         account = _unwrap_data(account_payload or {})
         profiles = self._call_phyllo(
             lambda: self.phyllo_client.list_profiles(account_id=account_id)
         )
         profile = _unwrap_data(profiles[0]) if profiles else {}
+        return account, profile
 
-        payload_user_id = _pick_text(account, profile, keys=("user_id", "phyllo_user_id"))
-        if payload_user_id and payload_user_id != phyllo_user_id:
+    def _complete_phyllo_connection_from_payload(
+        self,
+        *,
+        tenant_id: str,
+        membership_id: str | None,
+        session_id: str,
+        phyllo_user_id: str,
+        account_id: str,
+        work_platform_id: str | None,
+        account: dict[str, Any],
+        profile: dict[str, Any],
+    ) -> tuple[dict[str, Any], JobRecord]:
+        payload_user_id = _phyllo_account_owner_id(account, profile)
+        if not payload_user_id or payload_user_id != phyllo_user_id:
             raise HTTPException(status_code=409, detail="Conta Phyllo nao pertence ao usuario")
 
         phyllo_account_id = str(account.get("id") or account_id)
@@ -457,7 +504,7 @@ class SocialOnboardingService:
                 """
             ),
             {
-                "tenant_id": str(current.tenant_id),
+                "tenant_id": tenant_id,
                 "session_id": session_id,
                 "environment": self.settings.phyllo_environment,
                 "phyllo_user_id": phyllo_user_id,
@@ -496,14 +543,15 @@ class SocialOnboardingService:
                     updated_at = NOW()
                 WHERE tenant_id = :tenant_id
                   AND id = :session_id
-                  AND status <> 'archived'
+                  AND status = 'connecting'
+                  AND connection_mode = 'oauth'
                 RETURNING *
                 """
             ),
             {
-                "tenant_id": str(current.tenant_id),
+                "tenant_id": tenant_id,
                 "session_id": session_id,
-                "membership_id": str(current.membership_id),
+                "membership_id": membership_id,
                 "provider": provider,
                 "account_id": phyllo_account_id,
                 "handle": handle,
@@ -515,10 +563,11 @@ class SocialOnboardingService:
         ).mappings().first()
         if row is None:
             self.db.rollback()
-            raise HTTPException(status_code=404, detail="Onboarding nao encontrado")
+            raise HTTPException(status_code=409, detail="Conexao Phyllo ja processada")
 
-        job = self._enqueue_diagnostic_job(
-            current=current,
+        job = self._enqueue_diagnostic_job_for_ids(
+            tenant_id=tenant_id,
+            membership_id=membership_id,
             session_id=session_id,
             analysis_version=int(row["analysis_version"]),
             commit=False,
@@ -783,6 +832,177 @@ class SocialOnboardingService:
         self.db.commit()
         return [dict(row) for row in rows]
 
+    def reconcile_phyllo_connecting_sessions(
+        self,
+        *,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        candidates = self.db.execute(
+            text(
+                """
+                SELECT
+                  s.id AS session_id,
+                  s.tenant_id,
+                  COALESCE(s.updated_by_membership_id, s.created_by_membership_id)
+                    AS membership_id,
+                  s.updated_at,
+                  u.phyllo_user_id
+                FROM social_onboarding_sessions s
+                JOIN social_phyllo_users u
+                  ON u.tenant_id = s.tenant_id
+                 AND u.environment = :environment
+                 AND u.status = 'active'
+                WHERE s.status = 'connecting'
+                  AND s.connection_mode = 'oauth'
+                  AND s.status <> 'archived'
+                ORDER BY s.updated_at ASC, s.id ASC
+                LIMIT :limit
+                """
+            ),
+            {
+                "environment": self.settings.phyllo_environment,
+                "limit": max(1, limit),
+            },
+        ).mappings().all()
+        self.db.rollback()
+
+        reconciled: list[dict[str, Any]] = []
+        for candidate in candidates:
+            tenant_id = str(candidate["tenant_id"])
+            session_id = str(candidate["session_id"])
+            phyllo_user_id = str(candidate["phyllo_user_id"])
+            try:
+                accounts = self._call_phyllo(
+                    lambda phyllo_user_id=phyllo_user_id: self.phyllo_client.list_accounts(
+                        user_id=phyllo_user_id
+                    )
+                )
+                account_id = _preferred_connected_account_id(
+                    accounts,
+                    instagram_work_platform_id=self.settings.phyllo_instagram_work_platform_id,
+                )
+                if account_id:
+                    account, profile = self._fetch_phyllo_account_payload(account_id=account_id)
+                    try:
+                        session, job = self._complete_phyllo_connection_from_payload(
+                            tenant_id=tenant_id,
+                            membership_id=(
+                                str(candidate["membership_id"])
+                                if candidate["membership_id"]
+                                else None
+                            ),
+                            session_id=session_id,
+                            phyllo_user_id=phyllo_user_id,
+                            account_id=account_id,
+                            work_platform_id=None,
+                            account=account,
+                            profile=profile,
+                        )
+                    except HTTPException as exc:
+                        if exc.status_code == 409 and exc.detail == "Conexao Phyllo ja processada":
+                            continue
+                        ownership_error = exc.detail == "Conta Phyllo nao pertence ao usuario"
+                        if exc.status_code != 409 or not ownership_error:
+                            raise
+                        failed = self._mark_phyllo_connection_failed(
+                            tenant_id=tenant_id,
+                            session_id=session_id,
+                            error_code="phyllo_account_owner_mismatch",
+                            error_message="Phyllo account ownership could not be verified",
+                        )
+                        if failed:
+                            reconciled.append(
+                                {
+                                    "session_id": session_id,
+                                    "status": "failed",
+                                    "reason": "phyllo_account_owner_mismatch",
+                                }
+                            )
+                        continue
+                    reconciled.append(
+                        {
+                            "session_id": str(session["id"]),
+                            "status": session["status"],
+                            "job_id": str(job.id),
+                        }
+                    )
+                    continue
+
+                expired = self.db.execute(
+                    text(
+                        """
+                        UPDATE social_onboarding_sessions
+                        SET status = 'failed',
+                            error_code = 'phyllo_connection_timeout',
+                            error_message = 'Phyllo connection was not completed in time',
+                            updated_at = NOW()
+                        WHERE tenant_id = :tenant_id
+                          AND id = :session_id
+                          AND status = 'connecting'
+                          AND connection_mode = 'oauth'
+                          AND updated_at < NOW() - (:timeout_minutes * INTERVAL '1 minute')
+                        RETURNING *
+                        """
+                    ),
+                    {
+                        "tenant_id": tenant_id,
+                        "session_id": session_id,
+                        "timeout_minutes": PHYLLO_CONNECT_TIMEOUT_MINUTES,
+                    },
+                ).mappings().first()
+                self.db.commit()
+                if expired is not None:
+                    reconciled.append(
+                        {
+                            "session_id": str(expired["id"]),
+                            "status": "failed",
+                            "reason": "phyllo_connection_timeout",
+                        }
+                    )
+            except Exception:
+                logger.warning(
+                    "phyllo_reconcile_candidate_failed",
+                    extra={"tenant_id": tenant_id, "session_id": session_id},
+                    exc_info=True,
+                )
+                self.db.rollback()
+                continue
+
+        return reconciled
+
+    def _mark_phyllo_connection_failed(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        error_code: str,
+        error_message: str,
+    ) -> bool:
+        failed = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET status = 'failed',
+                    error_code = :error_code,
+                    error_message = :error_message,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'connecting'
+                  AND connection_mode = 'oauth'
+                RETURNING id
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "error_code": error_code,
+                "error_message": error_message,
+            },
+        ).first()
+        self.db.commit()
+        return failed is not None
+
     def mark_diagnostic_failed(
         self,
         *,
@@ -825,9 +1045,26 @@ class SocialOnboardingService:
         analysis_version: int,
         commit: bool,
     ) -> JobRecord:
-        return self.job_queue.enqueue_job(
+        return self._enqueue_diagnostic_job_for_ids(
             tenant_id=str(current.tenant_id),
             membership_id=str(current.membership_id),
+            session_id=session_id,
+            analysis_version=analysis_version,
+            commit=commit,
+        )
+
+    def _enqueue_diagnostic_job_for_ids(
+        self,
+        *,
+        tenant_id: str,
+        membership_id: str | None,
+        session_id: str,
+        analysis_version: int,
+        commit: bool,
+    ) -> JobRecord:
+        return self.job_queue.enqueue_job(
+            tenant_id=tenant_id,
+            membership_id=membership_id,
             job_type=SOCIAL_ONBOARDING_DIAGNOSE_JOB,
             queue_name=SOCIAL_ONBOARDING_QUEUE,
             idempotency_key=f"social.onboarding.diagnose:{session_id}:v{analysis_version}",
@@ -838,6 +1075,38 @@ class SocialOnboardingService:
 
     def _get_or_create_phyllo_user(self, *, current: CurrentMembership) -> dict[str, Any]:
         environment = self.settings.phyllo_environment
+        existing = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_phyllo_users
+                WHERE tenant_id = :tenant_id
+                  AND environment = :environment
+                  AND status = 'active'
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "environment": environment},
+        ).mappings().first()
+        if existing is not None:
+            self.db.rollback()
+            return dict(existing)
+
+        self.db.rollback()
+        external_id = f"labby:tenant:{current.tenant_id}:social-onboarding"
+        remote_user = self._call_phyllo(
+            lambda: self.phyllo_client.get_user_by_external_id(external_id)
+        )
+        if remote_user is None:
+            remote_user = self._call_phyllo(
+                lambda: self.phyllo_client.create_user(
+                    name=current.nome or current.email,
+                    external_id=external_id,
+                )
+            )
+        phyllo_user_id = _pick_text(remote_user or {}, keys=("id", "user_id"))
+        if not phyllo_user_id:
+            raise HTTPException(status_code=502, detail="Phyllo nao retornou user_id")
+
         self.db.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
             {"lock_key": f"phyllo:{environment}:{current.tenant_id}"},
@@ -855,22 +1124,8 @@ class SocialOnboardingService:
             {"tenant_id": str(current.tenant_id), "environment": environment},
         ).mappings().first()
         if existing is not None:
+            self.db.commit()
             return dict(existing)
-
-        external_id = f"labby:tenant:{current.tenant_id}:social-onboarding"
-        remote_user = self._call_phyllo(
-            lambda: self.phyllo_client.get_user_by_external_id(external_id)
-        )
-        if remote_user is None:
-            remote_user = self._call_phyllo(
-                lambda: self.phyllo_client.create_user(
-                    name=current.nome or current.email,
-                    external_id=external_id,
-                )
-            )
-        phyllo_user_id = _pick_text(remote_user or {}, keys=("id", "user_id"))
-        if not phyllo_user_id:
-            raise HTTPException(status_code=502, detail="Phyllo nao retornou user_id")
 
         row = self.db.execute(
             text(
@@ -910,6 +1165,7 @@ class SocialOnboardingService:
                 "metadata_json": json.dumps(remote_user or {}),
             },
         ).mappings().one()
+        self.db.commit()
         return dict(row)
 
     def _call_phyllo(self, operation):
@@ -920,7 +1176,8 @@ class SocialOnboardingService:
             raise HTTPException(status_code=503, detail="Phyllo nao configurado") from exc
         except PhylloProviderError as exc:
             self.db.rollback()
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
+            logger.warning("phyllo_provider_error", exc_info=True)
+            raise HTTPException(status_code=502, detail="Falha ao comunicar com a Phyllo") from exc
 
     def _get_session(self, *, current: CurrentMembership, session_id: str) -> dict[str, Any]:
         row = self.db.execute(
@@ -1029,11 +1286,51 @@ def _extract_sdk_token(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _preferred_connected_account_id(
+    accounts: list[dict[str, Any]],
+    *,
+    instagram_work_platform_id: str,
+) -> str | None:
+    connected_accounts = [account for account in accounts if _is_connected_phyllo_account(account)]
+    instagram_accounts = [
+        account
+        for account in connected_accounts
+        if _phyllo_work_platform_id(account) == instagram_work_platform_id
+    ]
+    for account in [*instagram_accounts, *connected_accounts]:
+        account_id = _pick_text(account, keys=("id", "account_id"))
+        if account_id:
+            return account_id
+    return None
+
+
+def _is_connected_phyllo_account(account: dict[str, Any]) -> bool:
+    status = _pick_text(account, keys=("status", "account_status", "connection_status"))
+    return bool(status and status.strip().lower() == "connected")
+
+
+def _phyllo_work_platform_id(account: dict[str, Any]) -> str | None:
+    return _pick_text(account, keys=("work_platform_id", "platform_id"))
+
+
 def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data")
     if isinstance(data, dict):
         return data
     return payload
+
+
+def _phyllo_account_owner_id(*payloads: dict[str, Any]) -> str | None:
+    for payload in payloads:
+        user = payload.get("user")
+        if isinstance(user, dict):
+            owner_id = str(user.get("id") or "").strip()
+            if owner_id:
+                return owner_id
+        owner_id = _pick_text(payload, keys=("user_id", "phyllo_user_id"))
+        if owner_id:
+            return owner_id
+    return None
 
 
 def _pick_text(*payloads: dict[str, Any], keys: tuple[str, ...]) -> str | None:
