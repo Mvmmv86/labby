@@ -275,7 +275,16 @@ class SocialOnboardingService:
                 """
                 UPDATE social_onboarding_sessions
                 SET status = 'connecting',
+                    primary_provider = 'instagram',
                     connection_mode = 'oauth',
+                    connected_account_id = NULL,
+                    connected_account_handle = NULL,
+                    connected_account_name = NULL,
+                    profile_url = NULL,
+                    profile_snapshot = '{}'::jsonb,
+                    analysis_report = NULL,
+                    analysis_started_at = NULL,
+                    analysis_completed_at = NULL,
                     progress_steps = CAST(:progress_steps AS jsonb),
                     error_code = NULL,
                     error_message = NULL,

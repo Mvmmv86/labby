@@ -245,6 +245,54 @@ def test_social_onboarding_phyllo_connect_token_creates_tenant_user_once(
     assert status == "connecting"
 
 
+def test_social_onboarding_phyllo_connect_token_clears_simulated_report(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="grow_audience")
+    connected, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url="https://instagram.com/marca",
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert ready["status"] == "ready"
+    assert ready["connection_mode"] == "simulated"
+    assert ready["connected_account_handle"] == "marca"
+    assert ready["analysis_report"]
+
+    service.create_phyllo_connect_token(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+
+    oauth = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert oauth["status"] == "connecting"
+    assert oauth["connection_mode"] == "oauth"
+    assert oauth["primary_provider"] == "instagram"
+    assert oauth["connected_account_id"] is None
+    assert oauth["connected_account_handle"] is None
+    assert oauth["connected_account_name"] is None
+    assert oauth["profile_url"] is None
+    assert oauth["profile_snapshot"] == {}
+    assert oauth["analysis_report"] is None
+    assert oauth["analysis_started_at"] is None
+    assert oauth["analysis_completed_at"] is None
+
+
 def test_social_onboarding_phyllo_complete_updates_oauth_snapshot_and_job(
     db_session: Session,
 ) -> None:
