@@ -800,9 +800,21 @@ class SocialOnboardingService:
             return session
 
         account, profile = self._fetch_phyllo_account_payload(account_id=account_id)
-        contents = self._call_phyllo(
-            lambda: self.phyllo_client.list_contents(account_id=account_id)
-        )
+        content_sync_status = "synced"
+        content_sync_error = None
+        try:
+            contents = self._call_phyllo(
+                lambda: self.phyllo_client.list_contents(account_id=account_id)
+            )
+        except HTTPException as exc:
+            logger.warning(
+                "phyllo_content_sync_degraded",
+                extra={"session_id": str(session["id"]), "phyllo_account_id": account_id},
+                exc_info=True,
+            )
+            contents = []
+            content_sync_status = "unavailable"
+            content_sync_error = str(exc.detail)
 
         provider = str(snapshot.get("provider") or session.get("primary_provider") or "instagram")
         handle = str(
@@ -848,6 +860,9 @@ class SocialOnboardingService:
             contents,
             followers_count=int(refreshed_snapshot.get("followers_count") or 0),
         )
+        content_summary["data_quality"]["content_sync_status"] = content_sync_status
+        if content_sync_error:
+            content_summary["data_quality"]["content_sync_error"] = content_sync_error
         refreshed_snapshot.update(content_summary)
 
         self.db.execute(
@@ -1618,7 +1633,9 @@ def _summarize_phyllo_contents(
     total_interactions = totals["likes"] + totals["comments"] + totals["shares"] + totals["saves"]
     total_reach = totals["reach"] or totals["views"] or totals["impressions"]
     engagement_by_followers = (
-        round((total_interactions / followers_count) * 100, 2) if followers_count else 0.0
+        round(((total_interactions / analyzed_count) / followers_count) * 100, 2)
+        if followers_count and analyzed_count
+        else 0.0
     )
     engagement_by_reach = (
         round((total_interactions / total_reach) * 100, 2) if total_reach else 0.0
@@ -1724,6 +1741,9 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
     content_metrics = snapshot.get("content_metrics") or {}
     top_contents = snapshot.get("top_contents") or []
     contents_analyzed = int(snapshot.get("content_items_count") or 0)
+    snapshot_quality = (
+        snapshot.get("data_quality") if isinstance(snapshot.get("data_quality"), dict) else {}
+    )
     real_engagement = float(content_metrics.get("engagement_rate_by_reach") or 0) or float(
         content_metrics.get("engagement_rate_by_followers") or 0
     )
@@ -1784,7 +1804,11 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
             "identity_sync_status": snapshot.get("identity_sync_status"),
             "engagement_sync_status": snapshot.get("engagement_sync_status"),
             "contents_analyzed": contents_analyzed,
-            "has_real_engagement": contents_analyzed > 0,
+            "has_real_engagement": bool(
+                snapshot_quality.get("has_real_engagement", contents_analyzed > 0)
+            ),
+            "content_sync_status": snapshot_quality.get("content_sync_status"),
+            "content_sync_error": snapshot_quality.get("content_sync_error"),
         },
         "content_metrics": content_metrics,
         "top_contents": top_contents,

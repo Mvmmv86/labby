@@ -35,6 +35,7 @@ class FakePhylloClient:
         self.accounts_by_id: dict[str, dict[str, Any]] = {}
         self.contents_by_account_id: dict[str, list[dict[str, Any]]] = {}
         self.list_accounts_errors: set[str] = set()
+        self.list_contents_errors: set[str] = set()
 
     def get_user_by_external_id(self, external_id: str):
         return self.users_by_external_id.get(external_id)
@@ -90,6 +91,8 @@ class FakePhylloClient:
         ]
 
     def list_contents(self, *, account_id: str, limit: int = 30):
+        if account_id in self.list_contents_errors:
+            raise PhylloProviderError("Phyllo contents temporariamente indisponivel")
         return self.contents_by_account_id.get(
             account_id,
             [
@@ -414,11 +417,49 @@ def test_social_onboarding_diagnostic_uses_real_phyllo_content_metrics(
     assert snapshot["content_metrics"]["views"] == 5100
     assert snapshot["content_metrics"]["reach"] == 4300
     assert snapshot["content_metrics"]["interactions"] == 248
+    assert snapshot["content_metrics"]["engagement_rate_by_followers"] == 2.95
     assert snapshot["top_contents"][0]["external_id"] == "ig-1"
     assert report["data_quality"]["contents_analyzed"] == 2
     assert report["data_quality"]["has_real_engagement"] is True
+    assert report["data_quality"]["content_sync_status"] == "synced"
     assert report["top_contents"][0]["metrics"]["comments"] == 12
     assert "Cripto" not in report["segment"]["name"]
+
+
+def test_social_onboarding_diagnostic_degrades_when_phyllo_contents_fail(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    phyllo.list_contents_errors.add("phyllo-account-1")
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="authority")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    connected, _ = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+
+    result = service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    assert result["status"] == "ready"
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    snapshot = ready["profile_snapshot"]
+    report = ready["analysis_report"]
+    assert snapshot["followers_count"] == 4200
+    assert snapshot["content_items_count"] == 0
+    assert snapshot["content_metrics"]["interactions"] == 0
+    assert snapshot["data_quality"]["content_sync_status"] == "unavailable"
+    assert report["data_quality"]["contents_analyzed"] == 0
+    assert report["data_quality"]["has_real_engagement"] is False
+    assert report["data_quality"]["content_sync_status"] == "unavailable"
 
 
 def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(
