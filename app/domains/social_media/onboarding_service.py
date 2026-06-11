@@ -425,35 +425,19 @@ class SocialOnboardingService:
             profile,
             keys=("status", "account_status", "connection_status"),
         )
-        snapshot = {
-            "provider": provider,
-            "handle": handle,
-            "display_name": display_name,
-            "profile_url": profile_url,
-            "followers_count": _pick_number(
-                account,
-                profile,
-                keys=("followers_count", "follower_count", "followers", "subscribers_count"),
-            ),
-            "posts_count": _pick_number(
-                account,
-                profile,
-                keys=("posts_count", "post_count", "media_count", "content_count"),
-            ),
-            "average_engagement_rate": _pick_number(
-                account,
-                profile,
-                keys=("average_engagement_rate", "engagement_rate"),
-                as_float=True,
-            ),
-            "source": "phyllo",
-            "connection_mode": "oauth",
-            "phyllo_user_id": phyllo_user_id,
-            "phyllo_account_id": phyllo_account_id,
-            "phyllo_profile_id": phyllo_profile_id,
-            "work_platform_id": effective_work_platform_id,
-            "account_status": account_status,
-        }
+        snapshot = _build_phyllo_profile_snapshot(
+            provider=provider,
+            handle=handle,
+            display_name=display_name,
+            profile_url=profile_url,
+            phyllo_user_id=phyllo_user_id,
+            phyllo_account_id=phyllo_account_id,
+            phyllo_profile_id=phyllo_profile_id,
+            work_platform_id=effective_work_platform_id,
+            account_status=account_status,
+            account=account,
+            profile=profile,
+        )
 
         self.db.execute(
             text(
@@ -759,14 +743,17 @@ class SocialOnboardingService:
                 "analysis_version": analysis_version,
             }
 
+        self.db.rollback()
+        analysis_session = self._refresh_oauth_analysis_snapshot(dict(row))
         references = self._list_references(tenant_id=tenant_id, session_id=session_id)
-        report = _build_report(dict(row), references)
+        report = _build_report(analysis_session, references)
         progress = _ready_progress()
         updated = self.db.execute(
             text(
                 """
                 UPDATE social_onboarding_sessions
                 SET status = 'ready',
+                    profile_snapshot = CAST(:profile_snapshot AS jsonb),
                     analysis_report = CAST(:analysis_report AS jsonb),
                     progress_steps = CAST(:progress_steps AS jsonb),
                     analysis_completed_at = NOW(),
@@ -785,6 +772,7 @@ class SocialOnboardingService:
                 "tenant_id": tenant_id,
                 "session_id": session_id,
                 "analysis_version": int(row["analysis_version"]),
+                "profile_snapshot": json.dumps(analysis_session.get("profile_snapshot") or {}),
                 "analysis_report": json.dumps(report),
                 "progress_steps": json.dumps(progress),
             },
@@ -799,6 +787,96 @@ class SocialOnboardingService:
             }
         self.db.commit()
         return {"session_id": session_id, "status": "ready"}
+
+    def _refresh_oauth_analysis_snapshot(self, session: dict[str, Any]) -> dict[str, Any]:
+        if session.get("connection_mode") != "oauth":
+            return session
+
+        snapshot = dict(session.get("profile_snapshot") or {})
+        account_id = str(
+            snapshot.get("phyllo_account_id") or session.get("connected_account_id") or ""
+        )
+        if not account_id:
+            return session
+
+        account, profile = self._fetch_phyllo_account_payload(account_id=account_id)
+        contents = self._call_phyllo(
+            lambda: self.phyllo_client.list_contents(account_id=account_id)
+        )
+
+        provider = str(snapshot.get("provider") or session.get("primary_provider") or "instagram")
+        handle = str(
+            snapshot.get("handle") or session.get("connected_account_handle") or account_id[:12]
+        )
+        display_name = str(
+            snapshot.get("display_name") or session.get("connected_account_name") or handle
+        )
+        profile_url = (
+            str(snapshot.get("profile_url"))
+            if snapshot.get("profile_url")
+            else _pick_text(account, profile, keys=("profile_url", "url", "account_url"))
+        )
+        phyllo_profile_id = (
+            str(snapshot.get("phyllo_profile_id"))
+            if snapshot.get("phyllo_profile_id")
+            else _pick_text(profile, keys=("id", "profile_id"))
+        )
+        work_platform_id = (
+            str(snapshot.get("work_platform_id"))
+            if snapshot.get("work_platform_id")
+            else _pick_text(account, profile, keys=("work_platform_id", "platform_id"))
+        )
+        account_status = _pick_text(
+            account,
+            profile,
+            keys=("status", "account_status", "connection_status"),
+        )
+        refreshed_snapshot = _build_phyllo_profile_snapshot(
+            provider=provider,
+            handle=handle,
+            display_name=display_name,
+            profile_url=profile_url,
+            phyllo_user_id=str(snapshot.get("phyllo_user_id") or ""),
+            phyllo_account_id=account_id,
+            phyllo_profile_id=phyllo_profile_id,
+            work_platform_id=work_platform_id,
+            account_status=account_status,
+            account=account,
+            profile=profile,
+        )
+        content_summary = _summarize_phyllo_contents(
+            contents,
+            followers_count=int(refreshed_snapshot.get("followers_count") or 0),
+        )
+        refreshed_snapshot.update(content_summary)
+
+        self.db.execute(
+            text(
+                """
+                UPDATE social_phyllo_accounts
+                SET raw_account = CAST(:raw_account AS jsonb),
+                    raw_profile = CAST(:raw_profile AS jsonb),
+                    account_status = :account_status,
+                    last_synced_at = NOW(),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND environment = :environment
+                  AND phyllo_account_id = :phyllo_account_id
+                """
+            ),
+            {
+                "tenant_id": str(session["tenant_id"]),
+                "environment": self.settings.phyllo_environment,
+                "phyllo_account_id": account_id,
+                "account_status": account_status,
+                "raw_account": json.dumps(account),
+                "raw_profile": json.dumps(profile),
+            },
+        )
+        self.db.commit()
+
+        session["profile_snapshot"] = refreshed_snapshot
+        return session
 
     def reconcile_abandoned_analyses(
         self,
@@ -1413,18 +1491,271 @@ def _provider_from_phyllo(
     return "instagram"
 
 
+def _build_phyllo_profile_snapshot(
+    *,
+    provider: str,
+    handle: str,
+    display_name: str,
+    profile_url: str | None,
+    phyllo_user_id: str,
+    phyllo_account_id: str,
+    phyllo_profile_id: str | None,
+    work_platform_id: str | None,
+    account_status: str | None,
+    account: dict[str, Any],
+    profile: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "provider": provider,
+        "handle": handle,
+        "display_name": display_name,
+        "profile_url": profile_url,
+        "profile_image_url": _pick_text(
+            account,
+            profile,
+            keys=("profile_pic_url", "image_url", "profile_image_url", "avatar_url"),
+        ),
+        "bio": _pick_text(profile, account, keys=("introduction", "bio", "description")),
+        "website": _pick_text(profile, account, keys=("website", "website_url", "link_url")),
+        "followers_count": _pick_number(
+            account,
+            profile,
+            keys=("followers_count", "follower_count", "followers", "subscribers_count"),
+        ),
+        "following_count": _pick_number(
+            account,
+            profile,
+            keys=("following_count", "follows_count", "following"),
+        ),
+        "posts_count": _pick_number(
+            account,
+            profile,
+            keys=("posts_count", "post_count", "media_count", "content_count"),
+        ),
+        "average_engagement_rate": _pick_number(
+            account,
+            profile,
+            keys=("average_engagement_rate", "engagement_rate"),
+            as_float=True,
+        ),
+        "is_business": _pick_bool(profile, account, keys=("is_business", "business_account")),
+        "is_verified": _pick_bool(profile, account, keys=("is_verified", "verified")),
+        "source": "phyllo",
+        "connection_mode": "oauth",
+        "phyllo_user_id": phyllo_user_id,
+        "phyllo_account_id": phyllo_account_id,
+        "phyllo_profile_id": phyllo_profile_id,
+        "work_platform_id": work_platform_id,
+        "account_status": account_status,
+        "identity_sync_status": _phyllo_product_status(account, "identity"),
+        "engagement_sync_status": _phyllo_product_status(account, "engagement"),
+        "engagement_last_sync_at": _phyllo_product_field(account, "engagement", "last_sync_at"),
+        "engagement_data_available_from": _phyllo_product_field(
+            account, "engagement", "data_available_from"
+        ),
+    }
+
+
+def _phyllo_product_status(account: dict[str, Any], product: str) -> str | None:
+    value = _phyllo_product_field(account, product, "status")
+    return str(value).upper() if value else None
+
+
+def _phyllo_product_field(account: dict[str, Any], product: str, field: str) -> Any:
+    data = account.get("data")
+    if not isinstance(data, dict):
+        return None
+    product_data = data.get(product)
+    if not isinstance(product_data, dict):
+        return None
+    return product_data.get(field)
+
+
+def _pick_bool(*payloads: dict[str, Any], keys: tuple[str, ...]) -> bool | None:
+    for payload in payloads:
+        value = _find_value(payload, keys)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "sim"}:
+                return True
+            if normalized in {"false", "0", "no", "nao", "não"}:
+                return False
+    return None
+
+
+def _summarize_phyllo_contents(
+    contents: list[dict[str, Any]],
+    *,
+    followers_count: int,
+) -> dict[str, Any]:
+    normalized: list[dict[str, Any]] = []
+    totals = {
+        "likes": 0,
+        "comments": 0,
+        "shares": 0,
+        "saves": 0,
+        "views": 0,
+        "reach": 0,
+        "impressions": 0,
+        "profile_visits": 0,
+        "followers_gained": 0,
+    }
+    type_counts: dict[str, int] = {}
+    format_counts: dict[str, int] = {}
+
+    for content in contents[:50]:
+        item = _normalize_phyllo_content(content, followers_count=followers_count)
+        normalized.append(item)
+        type_counts[item["type"]] = type_counts.get(item["type"], 0) + 1
+        format_counts[item["format"]] = format_counts.get(item["format"], 0) + 1
+        metrics = item["metrics"]
+        for key in totals:
+            totals[key] += int(metrics.get(key) or 0)
+
+    analyzed_count = len(normalized)
+    total_interactions = totals["likes"] + totals["comments"] + totals["shares"] + totals["saves"]
+    total_reach = totals["reach"] or totals["views"] or totals["impressions"]
+    engagement_by_followers = (
+        round((total_interactions / followers_count) * 100, 2) if followers_count else 0.0
+    )
+    engagement_by_reach = (
+        round((total_interactions / total_reach) * 100, 2) if total_reach else 0.0
+    )
+    top_contents = sorted(normalized, key=lambda item: item["performance_score"], reverse=True)[:5]
+
+    return {
+        "content_items_count": analyzed_count,
+        "content_type_counts": type_counts,
+        "content_format_counts": format_counts,
+        "content_metrics": {
+            **totals,
+            "interactions": total_interactions,
+            "engagement_rate_by_followers": engagement_by_followers,
+            "engagement_rate_by_reach": engagement_by_reach,
+            "best_format": _top_count_key(format_counts),
+            "best_type": _top_count_key(type_counts),
+        },
+        "top_contents": top_contents,
+        "data_quality": {
+            "profile_source": "phyllo",
+            "contents_analyzed": analyzed_count,
+            "has_real_profile": True,
+            "has_real_engagement": analyzed_count > 0,
+        },
+    }
+
+
+def _normalize_phyllo_content(content: dict[str, Any], *, followers_count: int) -> dict[str, Any]:
+    engagement = content.get("engagement") if isinstance(content.get("engagement"), dict) else {}
+    additional_info = (
+        engagement.get("additional_info")
+        if isinstance(engagement.get("additional_info"), dict)
+        else {}
+    )
+    metrics = {
+        "likes": _int_value(engagement.get("like_count")),
+        "comments": _int_value(engagement.get("comment_count")),
+        "shares": _int_value(engagement.get("share_count")),
+        "saves": _int_value(engagement.get("save_count")),
+        "views": _int_value(engagement.get("view_count")),
+        "reach": _int_value(engagement.get("reach_organic_count"))
+        + _int_value(engagement.get("reach_paid_count")),
+        "impressions": _int_value(engagement.get("impression_organic_count"))
+        + _int_value(engagement.get("impression_paid_count")),
+        "profile_visits": _int_value(additional_info.get("profile_visits")),
+        "followers_gained": _int_value(additional_info.get("followers_gained")),
+    }
+    interactions = metrics["likes"] + metrics["comments"] + metrics["shares"] + metrics["saves"]
+    reach_base = metrics["reach"] or metrics["views"] or metrics["impressions"]
+    performance_score = (
+        metrics["likes"]
+        + metrics["comments"] * 4
+        + metrics["shares"] * 5
+        + metrics["saves"] * 5
+        + metrics["views"] * 0.02
+        + metrics["reach"] * 0.03
+    )
+    content_type = str(content.get("type") or "UNKNOWN").upper()
+    content_format = str(content.get("format") or "UNKNOWN").upper()
+    return {
+        "id": str(content.get("id") or ""),
+        "external_id": str(content.get("external_id") or ""),
+        "type": content_type,
+        "format": content_format,
+        "url": content.get("url"),
+        "published_at": content.get("published_at") or content.get("platform_published_at"),
+        "title": content.get("title") or content.get("description") or content.get("caption"),
+        "metrics": metrics,
+        "engagement_rate_by_followers": round((interactions / followers_count) * 100, 2)
+        if followers_count
+        else 0.0,
+        "engagement_rate_by_reach": round((interactions / reach_base) * 100, 2)
+        if reach_base
+        else 0.0,
+        "performance_score": round(performance_score, 2),
+    }
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _top_count_key(values: dict[str, int]) -> str | None:
+    if not values:
+        return None
+    return max(values.items(), key=lambda item: item[1])[0]
+
+
 def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:
     objective = session.get("objective") or "grow_audience"
     snapshot = session.get("profile_snapshot") or {}
     handle = session.get("connected_account_handle") or snapshot.get("handle") or "perfil"
     followers = int(snapshot.get("followers_count") or 0)
+    following = int(snapshot.get("following_count") or 0)
     posts = int(snapshot.get("posts_count") or 0)
     engagement = float(snapshot.get("average_engagement_rate") or 0)
+    bio = str(snapshot.get("bio") or "").strip()
+    website = str(snapshot.get("website") or "").strip()
+    content_metrics = snapshot.get("content_metrics") or {}
+    top_contents = snapshot.get("top_contents") or []
+    contents_analyzed = int(snapshot.get("content_items_count") or 0)
+    real_engagement = float(content_metrics.get("engagement_rate_by_reach") or 0) or float(
+        content_metrics.get("engagement_rate_by_followers") or 0
+    )
+    effective_engagement = real_engagement or engagement
     reference_handles = [f"@{ref['handle']}" for ref in references[:5]]
-    segment = _infer_segment(handle=handle, objective=objective, references=reference_handles)
-    strength = min(100, 44 + min(followers // 250, 22) + min(posts // 20, 18) + int(engagement * 4))
-    consistency = min(100, 42 + min(posts // 12, 26) + len(reference_handles) * 4)
+    segment = _infer_segment(
+        handle=handle,
+        objective=objective,
+        references=reference_handles,
+        bio=bio,
+        display_name=str(snapshot.get("display_name") or ""),
+    )
+    strength = min(
+        100,
+        34
+        + min(followers // 180, 22)
+        + min(posts // 12, 16)
+        + (10 if bio else 0)
+        + (8 if website else 0)
+        + (5 if snapshot.get("is_business") else 0),
+    )
+    consistency = min(
+        100,
+        36
+        + min(posts // 10, 18)
+        + min(contents_analyzed * 4, 22)
+        + (8 if content_metrics.get("best_format") else 0)
+        + len(reference_handles) * 3,
+    )
     benchmark_fit = min(100, 50 + len(reference_handles) * 8)
+    engagement_score = min(100, 38 + int(effective_engagement * 7) + min(contents_analyzed * 3, 18))
+    top_content_lines = _top_content_lines(top_contents)
 
     return {
         "headline": f"Diagnostico inicial de @{handle}",
@@ -1436,43 +1767,65 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         "scores": {
             "profile_strength": strength,
             "content_consistency": consistency,
-            "engagement_readiness": min(100, 48 + int(engagement * 10)),
+            "engagement_readiness": engagement_score,
             "benchmark_fit": benchmark_fit,
         },
+        "profile": {
+            "followers_count": followers,
+            "following_count": following,
+            "posts_count": posts,
+            "bio": bio,
+            "website": website,
+            "is_business": snapshot.get("is_business"),
+            "is_verified": snapshot.get("is_verified"),
+        },
+        "data_quality": {
+            "source": snapshot.get("source") or "unknown",
+            "identity_sync_status": snapshot.get("identity_sync_status"),
+            "engagement_sync_status": snapshot.get("engagement_sync_status"),
+            "contents_analyzed": contents_analyzed,
+            "has_real_engagement": contents_analyzed > 0,
+        },
+        "content_metrics": content_metrics,
+        "top_contents": top_contents,
         "audience": {
             "summary": (
-                "Publico interessado em conteudo pratico, sinais de autoridade e "
-                "provas sociais frequentes."
+                _audience_summary(segment_name=segment["name"], bio=bio)
             ),
             "likely_needs": [
                 "clareza sobre promessa do perfil",
-                "conteudo comparavel e recorrente",
-                "motivos para salvar, comentar e voltar",
+                "conteudo com motivo claro para salvar, compartilhar ou responder",
+                "provas sociais conectadas a uma oferta ou proxima acao",
             ],
         },
         "content_pillars": [
-            {"name": "Autoridade", "description": "Provas, bastidores e opinioes fortes."},
-            {"name": "Educacao", "description": "Guias curtos, checklists e contexto."},
-            {"name": "Prova social", "description": "Resultados, casos e antes/depois."},
-            {"name": "Comunidade", "description": "Perguntas, enquetes e respostas."},
+            {"name": "Autoridade", "description": "Teses, bastidores e leitura de mercado."},
+            {"name": "Educacao", "description": "Guias curtos, checklists e contexto acionavel."},
+            {"name": "Prova social", "description": "Resultados, estudos de caso e antes/depois."},
+            {"name": "Comunidade", "description": "Perguntas, enquetes, replies e objecoes reais."},
         ],
         "opportunities": [
             {
                 "priority": "alta",
                 "title": "Ajustar promessa do perfil",
+                "description": _profile_opportunity(bio=bio, website=website),
+            },
+            {
+                "priority": "media",
+                "title": "Replicar os sinais dos melhores conteudos",
                 "description": (
-                    "Bio, destaques e posts fixados precisam comunicar o ganho principal."
+                    top_content_lines[0]
+                    if top_content_lines
+                    else "Ainda faltam posts sincronizados para identificar padroes vencedores."
                 ),
             },
             {
                 "priority": "media",
-                "title": "Criar series recorrentes",
-                "description": "Series reduzem custo de producao e aumentam reconhecimento.",
-            },
-            {
-                "priority": "media",
-                "title": "Comparar com referencias",
-                "description": "Usar benchmarks para descobrir formatos com maior tracao.",
+                "title": "Aumentar engajamento qualificado",
+                "description": _engagement_opportunity(
+                    content_metrics=content_metrics,
+                    effective_engagement=effective_engagement,
+                ),
             },
         ],
         "benchmarks": {
@@ -1484,15 +1837,22 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
             ),
         },
         "next_actions": [
-            "confirmar segmento e publico-alvo",
-            "conectar mais uma rede para comparar consistencia",
-            "gerar calendario inicial de 7 dias",
+            "validar a promessa da bio contra o publico-alvo principal",
+            "separar os 3 conteudos com maior reach/view para mapear formato e gancho",
+            "criar calendario inicial de 7 dias com 2 testes de formato",
         ],
     }
 
 
-def _infer_segment(*, handle: str, objective: str, references: list[str]) -> dict[str, Any]:
-    text = " ".join([handle, objective, *references]).lower()
+def _infer_segment(
+    *,
+    handle: str,
+    objective: str,
+    references: list[str],
+    bio: str = "",
+    display_name: str = "",
+) -> dict[str, Any]:
+    text = " ".join([handle, objective, bio, display_name, *references]).lower()
     if any(token in text for token in ("cripto", "crypto", "bitcoin", "web3")):
         name = "Cripto, Web3 e ativos digitais"
     elif any(token in text for token in ("beauty", "moda", "estetica")):
@@ -1505,6 +1865,69 @@ def _infer_segment(*, handle: str, objective: str, references: list[str]) -> dic
         name = "Marca digital e conteudo de autoridade"
     return {
         "name": name,
-        "confidence": 0.72 if references else 0.58,
-        "signals": ["handle", "objetivo declarado", "referencias informadas"],
+        "confidence": 0.8 if bio or references else 0.58,
+        "signals": ["handle", "bio", "nome publico", "objetivo declarado", "referencias"],
     }
+
+
+def _audience_summary(*, segment_name: str, bio: str) -> str:
+    if "cripto" in segment_name.lower():
+        return (
+            "Publico interessado em leitura de mercado, sinais de decisao e contexto "
+            "sobre risco/oportunidade em ativos digitais."
+        )
+    if bio:
+        return (
+            "Publico atraido pela promessa explicita da bio e por conteudos que "
+            "transformam autoridade em decisao pratica."
+        )
+    return (
+        "Publico interessado em conteudo pratico, sinais de autoridade e provas "
+        "sociais frequentes."
+    )
+
+
+def _profile_opportunity(*, bio: str, website: str) -> str:
+    if not bio and not website:
+        return "Bio e link principal ainda nao comunicam promessa, publico e proxima acao."
+    if not website:
+        return "A bio ja existe, mas falta um destino claro para transformar atencao em acao."
+    if not bio:
+        return "O link existe, mas a bio precisa explicar para quem e por que clicar."
+    return "Bio e link existem; proximo passo e deixar a promessa mais especifica e mensuravel."
+
+
+def _engagement_opportunity(
+    *,
+    content_metrics: dict[str, Any],
+    effective_engagement: float,
+) -> str:
+    saves = int(content_metrics.get("saves") or 0)
+    shares = int(content_metrics.get("shares") or 0)
+    comments = int(content_metrics.get("comments") or 0)
+    if not content_metrics:
+        return "Sincronize conteudos recentes para medir saves, shares, comentarios e reach real."
+    if saves + shares == 0:
+        return "Criar conteudos mais salvaveis/compartilhaveis; hoje os sinais fortes estao baixos."
+    if comments == 0:
+        return "Adicionar perguntas, opinioes e CTAs de resposta para gerar conversa real."
+    return (
+        f"Manter testes em torno dos formatos que ja puxam "
+        f"{effective_engagement:.2f}% de engajamento."
+    )
+
+
+def _top_content_lines(top_contents: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for item in top_contents[:3]:
+        metrics = item.get("metrics") or {}
+        label = " ".join(filter(None, [item.get("type"), item.get("format")])).strip()
+        views = int(metrics.get("views") or 0)
+        reach = int(metrics.get("reach") or 0)
+        comments = int(metrics.get("comments") or 0)
+        shares = int(metrics.get("shares") or 0)
+        lines.append(
+            f"{label or 'Conteudo'} com {views or reach} visualizacoes/alcance, "
+            f"{comments} comentarios e {shares} compartilhamentos."
+        )
+    return lines

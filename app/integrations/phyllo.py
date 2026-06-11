@@ -62,6 +62,14 @@ class PhylloClient:
         )
         return _extract_collection(payload)
 
+    def list_contents(self, *, account_id: str, limit: int = 30) -> list[dict[str, Any]]:
+        payload = self._request(
+            "GET",
+            "/v1/social/contents",
+            params={"account_id": account_id, "limit": str(max(1, min(limit, 100)))},
+        )
+        return _extract_collection(payload)
+
     def _request(
         self,
         method: str,

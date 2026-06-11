@@ -33,6 +33,7 @@ class FakePhylloClient:
         self.created_tokens: list[dict[str, Any]] = []
         self.accounts_by_user_id: dict[str, list[dict[str, Any]]] = {}
         self.accounts_by_id: dict[str, dict[str, Any]] = {}
+        self.contents_by_account_id: dict[str, list[dict[str, Any]]] = {}
         self.list_accounts_errors: set[str] = set()
 
     def get_user_by_external_id(self, external_id: str):
@@ -61,6 +62,10 @@ class FakePhylloClient:
             "display_name": "Minha Marca",
             "profile_url": "https://instagram.com/minhamarca",
             "status": "connected",
+            "data": {
+                "identity": {"status": "SYNCED"},
+                "engagement": {"status": "SYNCED", "last_sync_at": "2026-06-11T10:00:00"},
+            },
         }
 
     def list_accounts(self, *, user_id: str):
@@ -74,10 +79,51 @@ class FakePhylloClient:
                 "id": "profile-1",
                 "account_id": account_id,
                 "follower_count": 4200,
+                "following_count": 900,
                 "content_count": 96,
                 "engagement_rate": 3.4,
+                "introduction": "Marca de conteudo sobre IA e vendas",
+                "website": "https://labby.com.br",
+                "is_business": True,
+                "is_verified": False,
             }
         ]
+
+    def list_contents(self, *, account_id: str, limit: int = 30):
+        return self.contents_by_account_id.get(
+            account_id,
+            [
+                {
+                    "id": "content-1",
+                    "external_id": "ig-1",
+                    "type": "REEL",
+                    "format": "VIDEO",
+                    "url": "https://instagram.com/reel/1",
+                    "engagement": {
+                        "like_count": 120,
+                        "comment_count": 12,
+                        "share_count": 8,
+                        "save_count": 20,
+                        "view_count": 5100,
+                        "reach_organic_count": 3400,
+                    },
+                },
+                {
+                    "id": "content-2",
+                    "external_id": "ig-2",
+                    "type": "POST",
+                    "format": "IMAGE",
+                    "url": "https://instagram.com/p/2",
+                    "engagement": {
+                        "like_count": 80,
+                        "comment_count": 4,
+                        "share_count": 1,
+                        "save_count": 3,
+                        "reach_organic_count": 900,
+                    },
+                },
+            ],
+        )[:limit]
 
 
 def make_phyllo_service(
@@ -315,6 +361,11 @@ def test_social_onboarding_phyllo_complete_updates_oauth_snapshot_and_job(
     assert connected["connected_account_handle"] == "minhamarca"
     assert connected["profile_snapshot"]["source"] == "phyllo"
     assert connected["profile_snapshot"]["followers_count"] == 4200
+    assert connected["profile_snapshot"]["following_count"] == 900
+    assert connected["profile_snapshot"]["bio"] == "Marca de conteudo sobre IA e vendas"
+    assert connected["profile_snapshot"]["website"] == "https://labby.com.br"
+    assert connected["profile_snapshot"]["is_business"] is True
+    assert connected["profile_snapshot"]["engagement_sync_status"] == "SYNCED"
     assert connected["analysis_version"] == 1
     assert job.idempotency_key.endswith(":v1")
 
@@ -331,6 +382,43 @@ def test_social_onboarding_phyllo_complete_updates_oauth_snapshot_and_job(
     ).mappings().one()
     assert account_row["provider"] == "instagram"
     assert account_row["handle"] == "minhamarca"
+
+
+def test_social_onboarding_diagnostic_uses_real_phyllo_content_metrics(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = make_phyllo_service(db_session, phyllo)
+    session = service.create_session(current=current_one(), objective="authority")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+
+    connected, _ = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+
+    result = service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    assert result["status"] == "ready"
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    snapshot = ready["profile_snapshot"]
+    report = ready["analysis_report"]
+    assert snapshot["content_items_count"] == 2
+    assert snapshot["content_metrics"]["views"] == 5100
+    assert snapshot["content_metrics"]["reach"] == 4300
+    assert snapshot["content_metrics"]["interactions"] == 248
+    assert snapshot["top_contents"][0]["external_id"] == "ig-1"
+    assert report["data_quality"]["contents_analyzed"] == 2
+    assert report["data_quality"]["has_real_engagement"] is True
+    assert report["top_contents"][0]["metrics"]["comments"] == 12
+    assert "Cripto" not in report["segment"]["name"]
 
 
 def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(

@@ -81,3 +81,36 @@ def test_phyllo_http_client_is_reused(monkeypatch: pytest.MonkeyPatch) -> None:
     client.list_accounts(user_id="user-1")
 
     assert client_creations == 1
+
+
+def test_phyllo_lists_social_contents(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(str(request.url))
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "content-1",
+                        "engagement": {"like_count": 10, "share_count": 2},
+                    }
+                ]
+            },
+        )
+
+    original_client = httpx.Client
+    monkeypatch.setattr(
+        phyllo.httpx,
+        "Client",
+        lambda **_kwargs: original_client(transport=httpx.MockTransport(handler)),
+    )
+    phyllo._get_http_client.cache_clear()
+
+    contents = PhylloClient(make_settings()).list_contents(account_id="account-1", limit=10)
+
+    assert contents == [{"id": "content-1", "engagement": {"like_count": 10, "share_count": 2}}]
+    assert "/v1/social/contents" in captured[0]
+    assert "account_id=account-1" in captured[0]
+    assert "limit=10" in captured[0]
