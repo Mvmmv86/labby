@@ -1,6 +1,6 @@
 """social connected content truth
 
-Revision ID: 013_social_connected_content_truth
+Revision ID: 013_social_connected_truth
 Revises: 012_phyllo_social_integration
 Create Date: 2026-06-12
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "013_social_connected_content_truth"
+revision: str = "013_social_connected_truth"
 down_revision: str | None = "012_phyllo_social_integration"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
