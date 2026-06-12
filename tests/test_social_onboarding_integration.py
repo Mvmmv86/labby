@@ -422,8 +422,51 @@ def test_social_onboarding_diagnostic_uses_real_phyllo_content_metrics(
     assert report["data_quality"]["contents_analyzed"] == 2
     assert report["data_quality"]["has_real_engagement"] is True
     assert report["data_quality"]["content_sync_status"] == "synced"
+    assert report["truth_contract"]["version"] == "social_profile_truth_v1"
+    assert any(item["key"] == "followers_count" for item in report["observed_facts"])
+    assert any(
+        item["key"] == "engagement_rate_by_followers"
+        for item in report["computed_insights"]
+    )
+    assert any(
+        item["key"] == "segment" and item["is_inferred"]
+        for item in report["inferred_insights"]
+    )
+    assert any(item["key"] == "audience_demographics" for item in report["missing_data"])
     assert report["top_contents"][0]["metrics"]["comments"] == 12
+    assert "_raw" not in report["top_contents"][0]
     assert "Cripto" not in report["segment"]["name"]
+
+    content_rows = db_session.execute(
+        text(
+            """
+            SELECT
+              environment,
+              external_id,
+              content_type,
+              content_format,
+              metrics_json,
+              raw_payload,
+              data_truth,
+              engagement_rate_by_followers
+            FROM social_connected_contents
+            WHERE tenant_id = :tenant_id
+              AND phyllo_account_id = 'phyllo-account-1'
+            ORDER BY external_id ASC
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).mappings().all()
+    assert len(content_rows) == 2
+    assert content_rows[0]["environment"] == "staging"
+    assert content_rows[0]["external_id"] == "ig-1"
+    assert content_rows[0]["content_type"] == "REEL"
+    assert content_rows[0]["content_format"] == "VIDEO"
+    assert content_rows[0]["metrics_json"]["likes"] == 120
+    assert content_rows[0]["raw_payload"]["external_id"] == "ig-1"
+    assert content_rows[0]["raw_payload"]["engagement"]["comment_count"] == 12
+    assert content_rows[0]["data_truth"]["source"] == "phyllo"
+    assert float(content_rows[0]["engagement_rate_by_followers"]) == 3.81
 
 
 def test_social_onboarding_diagnostic_degrades_when_phyllo_contents_fail(
@@ -460,6 +503,18 @@ def test_social_onboarding_diagnostic_degrades_when_phyllo_contents_fail(
     assert report["data_quality"]["contents_analyzed"] == 0
     assert report["data_quality"]["has_real_engagement"] is False
     assert report["data_quality"]["content_sync_status"] == "unavailable"
+
+    content_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM social_connected_contents
+            WHERE tenant_id = :tenant_id
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one()
+    assert content_count == 0
 
 
 def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(

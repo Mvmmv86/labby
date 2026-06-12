@@ -7,8 +7,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -257,6 +259,80 @@ class SocialPhylloAccount(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SocialConnectedContent(Base):
+    __tablename__ = "social_connected_contents"
+    __table_args__ = (
+        CheckConstraint(
+            "environment IN ('sandbox', 'staging', 'production')",
+            name="ck_social_connected_contents_environment",
+        ),
+        CheckConstraint(
+            "provider IN ('instagram', 'youtube', 'x', 'linkedin', 'fake')",
+            name="ck_social_connected_contents_provider",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "environment",
+            "provider",
+            "external_id",
+            name="uq_social_connected_contents_tenant_env_provider_external",
+        ),
+        Index(
+            "ix_social_connected_contents_tenant_account_published",
+            "tenant_id",
+            "environment",
+            "phyllo_account_id",
+            "published_at",
+        ),
+        Index(
+            "ix_social_connected_contents_tenant_session_score",
+            "tenant_id",
+            "environment",
+            "onboarding_session_id",
+            "performance_score",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    onboarding_session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_onboarding_sessions.id", ondelete="SET NULL")
+    )
+    environment: Mapped[str] = mapped_column(String(30), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    phyllo_account_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(220), nullable=False)
+    phyllo_content_id: Mapped[str | None] = mapped_column(String(120))
+    content_type: Mapped[str] = mapped_column(String(60), nullable=False)
+    content_format: Mapped[str] = mapped_column(String(60), nullable=False)
+    title: Mapped[str | None] = mapped_column(Text)
+    content_url: Mapped[str | None] = mapped_column(Text)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    metrics_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    raw_payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    data_truth: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    engagement_rate_by_followers: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    engagement_rate_by_reach: Mapped[float | None] = mapped_column(Numeric(10, 2))
+    performance_score: Mapped[float | None] = mapped_column(Numeric(12, 2))
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
@@ -860,6 +861,13 @@ class SocialOnboardingService:
             contents,
             followers_count=int(refreshed_snapshot.get("followers_count") or 0),
         )
+        normalized_contents = list(content_summary.pop("_normalized_contents", []))
+        self._persist_connected_contents(
+            session=session,
+            provider=provider,
+            account_id=account_id,
+            normalized_contents=normalized_contents,
+        )
         content_summary["data_quality"]["content_sync_status"] = content_sync_status
         if content_sync_error:
             content_summary["data_quality"]["content_sync_error"] = content_sync_error
@@ -1270,6 +1278,122 @@ class SocialOnboardingService:
         self.db.commit()
         return dict(row)
 
+    def _persist_connected_contents(
+        self,
+        *,
+        session: dict[str, Any],
+        provider: str,
+        account_id: str,
+        normalized_contents: list[dict[str, Any]],
+    ) -> None:
+        rows: list[dict[str, Any]] = []
+        for item in normalized_contents:
+            raw_content = item.pop("_raw", {})
+            external_id = str(item.get("external_id") or item.get("id") or "").strip()
+            if not external_id:
+                continue
+            rows.append(
+                {
+                    "tenant_id": str(session["tenant_id"]),
+                    "session_id": str(session["id"]),
+                    "environment": self.settings.phyllo_environment,
+                    "provider": provider,
+                    "phyllo_account_id": account_id,
+                    "external_id": external_id,
+                    "phyllo_content_id": str(item.get("id") or "") or None,
+                    "content_type": item.get("type") or "UNKNOWN",
+                    "content_format": item.get("format") or "UNKNOWN",
+                    "title": item.get("title"),
+                    "content_url": item.get("url"),
+                    "published_at": _parse_datetime(item.get("published_at")),
+                    "metrics_json": json.dumps(item.get("metrics") or {}),
+                    "raw_payload": json.dumps(raw_content),
+                    "data_truth": json.dumps(
+                        {
+                            "source": "phyllo",
+                            "source_detail": "phyllo.social.contents",
+                            "confidence": "high",
+                            "is_inferred": False,
+                            "raw_payload_persisted": True,
+                        }
+                    ),
+                    "engagement_rate_by_followers": item.get("engagement_rate_by_followers"),
+                    "engagement_rate_by_reach": item.get("engagement_rate_by_reach"),
+                    "performance_score": item.get("performance_score"),
+                }
+            )
+        if not rows:
+            return
+        self.db.execute(
+            text(
+                """
+                INSERT INTO social_connected_contents (
+                  tenant_id,
+                  onboarding_session_id,
+                  environment,
+                  provider,
+                  phyllo_account_id,
+                  external_id,
+                  phyllo_content_id,
+                  content_type,
+                  content_format,
+                  title,
+                  content_url,
+                  published_at,
+                  metrics_json,
+                  raw_payload,
+                  data_truth,
+                  engagement_rate_by_followers,
+                  engagement_rate_by_reach,
+                  performance_score,
+                  observed_at,
+                  updated_at
+                )
+                VALUES (
+                  :tenant_id,
+                  :session_id,
+                  :environment,
+                  :provider,
+                  :phyllo_account_id,
+                  :external_id,
+                  :phyllo_content_id,
+                  :content_type,
+                  :content_format,
+                  :title,
+                  :content_url,
+                  :published_at,
+                  CAST(:metrics_json AS jsonb),
+                  CAST(:raw_payload AS jsonb),
+                  CAST(:data_truth AS jsonb),
+                  :engagement_rate_by_followers,
+                  :engagement_rate_by_reach,
+                  :performance_score,
+                  NOW(),
+                  NOW()
+                )
+                ON CONFLICT (tenant_id, environment, provider, external_id)
+                DO UPDATE SET
+                  onboarding_session_id = EXCLUDED.onboarding_session_id,
+                  phyllo_account_id = EXCLUDED.phyllo_account_id,
+                  phyllo_content_id = EXCLUDED.phyllo_content_id,
+                  content_type = EXCLUDED.content_type,
+                  content_format = EXCLUDED.content_format,
+                  title = EXCLUDED.title,
+                  content_url = EXCLUDED.content_url,
+                  published_at = EXCLUDED.published_at,
+                  metrics_json = EXCLUDED.metrics_json,
+                  raw_payload = EXCLUDED.raw_payload,
+                  data_truth = EXCLUDED.data_truth,
+                  engagement_rate_by_followers = EXCLUDED.engagement_rate_by_followers,
+                  engagement_rate_by_reach = EXCLUDED.engagement_rate_by_reach,
+                  performance_score = EXCLUDED.performance_score,
+                  observed_at = NOW(),
+                  updated_at = NOW()
+                """
+            ),
+            rows,
+        )
+
     def _call_phyllo(self, operation):
         try:
             return operation()
@@ -1622,6 +1746,7 @@ def _summarize_phyllo_contents(
 
     for content in contents[:50]:
         item = _normalize_phyllo_content(content, followers_count=followers_count)
+        item["_raw"] = content
         normalized.append(item)
         type_counts[item["type"]] = type_counts.get(item["type"], 0) + 1
         format_counts[item["format"]] = format_counts.get(item["format"], 0) + 1
@@ -1655,6 +1780,7 @@ def _summarize_phyllo_contents(
             "best_type": _top_count_key(type_counts),
         },
         "top_contents": top_contents,
+        "_normalized_contents": normalized,
         "data_quality": {
             "profile_source": "phyllo",
             "contents_analyzed": analyzed_count,
@@ -1722,6 +1848,24 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        return datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+
+
 def _top_count_key(values: dict[str, int]) -> str | None:
     if not values:
         return None
@@ -1776,6 +1920,19 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
     benchmark_fit = min(100, 50 + len(reference_handles) * 8)
     engagement_score = min(100, 38 + int(effective_engagement * 7) + min(contents_analyzed * 3, 18))
     top_content_lines = _top_content_lines(top_contents)
+    truth = _build_truth_sections(
+        snapshot=snapshot,
+        content_metrics=content_metrics,
+        top_contents=top_contents,
+        segment=segment,
+        scores={
+            "profile_strength": strength,
+            "content_consistency": consistency,
+            "engagement_readiness": engagement_score,
+            "benchmark_fit": benchmark_fit,
+        },
+        references=reference_handles,
+    )
 
     return {
         "headline": f"Diagnostico inicial de @{handle}",
@@ -1810,6 +1967,11 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
             "content_sync_status": snapshot_quality.get("content_sync_status"),
             "content_sync_error": snapshot_quality.get("content_sync_error"),
         },
+        "observed_facts": truth["observed_facts"],
+        "computed_insights": truth["computed_insights"],
+        "inferred_insights": truth["inferred_insights"],
+        "missing_data": truth["missing_data"],
+        "truth_contract": truth["truth_contract"],
         "content_metrics": content_metrics,
         "top_contents": top_contents,
         "audience": {
@@ -1865,6 +2027,221 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
             "separar os 3 conteudos com maior reach/view para mapear formato e gancho",
             "criar calendario inicial de 7 dias com 2 testes de formato",
         ],
+    }
+
+
+def _build_truth_sections(
+    *,
+    snapshot: dict[str, Any],
+    content_metrics: dict[str, Any],
+    top_contents: list[dict[str, Any]],
+    segment: dict[str, Any],
+    scores: dict[str, int],
+    references: list[str],
+) -> dict[str, Any]:
+    contents_analyzed = int(snapshot.get("content_items_count") or 0)
+    content_sync_status = None
+    snapshot_quality = snapshot.get("data_quality")
+    if isinstance(snapshot_quality, dict):
+        content_sync_status = snapshot_quality.get("content_sync_status")
+
+    observed_facts = [
+        _truth_item(
+            key="followers_count",
+            label="Seguidores lidos",
+            value=int(snapshot.get("followers_count") or 0),
+            source="phyllo.profile",
+            confidence="high",
+            evidence="Campo follower_count/followers_count retornado pela Phyllo.",
+        ),
+        _truth_item(
+            key="posts_count",
+            label="Posts no perfil",
+            value=int(snapshot.get("posts_count") or 0),
+            source="phyllo.profile",
+            confidence="high",
+            evidence="Campo content_count/media_count retornado pela Phyllo.",
+        ),
+        _truth_item(
+            key="contents_analyzed",
+            label="Conteudos reais analisados",
+            value=contents_analyzed,
+            source="phyllo.social.contents",
+            confidence="high" if contents_analyzed else "low",
+            evidence="Posts persistidos em social_connected_contents com payload bruto.",
+        ),
+    ]
+    if snapshot.get("bio"):
+        observed_facts.append(
+            _truth_item(
+                key="bio",
+                label="Bio do perfil",
+                value=snapshot.get("bio"),
+                source="phyllo.profile",
+                confidence="high",
+                evidence="Texto de bio retornado pela fonte conectada.",
+            )
+        )
+    if snapshot.get("website"):
+        observed_facts.append(
+            _truth_item(
+                key="website",
+                label="Link do perfil",
+                value=snapshot.get("website"),
+                source="phyllo.profile",
+                confidence="high",
+                evidence="URL retornada pela fonte conectada.",
+            )
+        )
+
+    computed_insights = [
+        _truth_item(
+            key="engagement_rate_by_followers",
+            label="ER medio por seguidores",
+            value=content_metrics.get("engagement_rate_by_followers"),
+            source="labby.calculation.v1",
+            confidence="high" if contents_analyzed else "low",
+            evidence="Media por conteudo: interacoes do post divididas por seguidores.",
+            method="avg((likes + comments + shares + saves) / followers) * 100",
+        ),
+        _truth_item(
+            key="engagement_rate_by_reach",
+            label="ER por alcance/views",
+            value=content_metrics.get("engagement_rate_by_reach"),
+            source="labby.calculation.v1",
+            confidence="high" if contents_analyzed else "low",
+            evidence="Interacoes totais divididas por reach/views disponivel.",
+            method="sum(interactions) / sum(reach_or_views) * 100",
+        ),
+        _truth_item(
+            key="best_format",
+            label="Formato mais recorrente",
+            value=content_metrics.get("best_format"),
+            source="labby.calculation.v1",
+            confidence="medium" if contents_analyzed else "low",
+            evidence="Contagem simples dos formatos retornados na amostra.",
+        ),
+    ]
+    for score_key, score in scores.items():
+        computed_insights.append(
+            _truth_item(
+                key=f"score_{score_key}",
+                label=f"Score {score_key}",
+                value=score,
+                source="labby.scoring.v1",
+                confidence="medium",
+                evidence=(
+                    "Score calculado por regras deterministicas a partir do perfil "
+                    "e posts reais."
+                ),
+            )
+        )
+
+    inferred_insights = [
+        _truth_item(
+            key="segment",
+            label="Segmento sugerido",
+            value=segment.get("name"),
+            source="labby.inference.v1",
+            confidence="medium",
+            is_inferred=True,
+            evidence="Inferencia baseada em handle, bio, nome do perfil e referencias informadas.",
+        ),
+        _truth_item(
+            key="audience_hypothesis",
+            label="Hipotese de publico",
+            value="Derivada do posicionamento do perfil, nao de dados demograficos.",
+            source="labby.inference.v1",
+            confidence="low",
+            is_inferred=True,
+            evidence="A API atual nao retornou idade, genero ou localizacao da audiencia.",
+        ),
+    ]
+
+    missing_data = []
+    if not contents_analyzed:
+        missing_data.append(
+            _missing_item(
+                key="content_engagement",
+                label="Posts com metricas de engajamento",
+                reason="A fonte ainda nao retornou conteudos ou a sincronizacao falhou.",
+                next_step="Reprocessar quando a Phyllo concluir a sincronizacao de engagement.",
+            )
+        )
+    if not references:
+        missing_data.append(
+            _missing_item(
+                key="reference_profiles",
+                label="Perfis publicos de referencia",
+                reason=(
+                    "O cliente ainda nao informou referencias e a busca publica "
+                    "ainda nao foi integrada."
+                ),
+                next_step="Adicionar 3 a 5 referencias do mesmo segmento no proximo corte.",
+            )
+        )
+    missing_data.append(
+        _missing_item(
+            key="audience_demographics",
+            label="Demografia da audiencia",
+            reason="A fonte conectada nao retornou idade, genero ou localizacao neste escopo.",
+            next_step="Tratar como dado ausente; nao usar como fato no diagnostico.",
+        )
+    )
+
+    return {
+        "truth_contract": {
+            "version": "social_profile_truth_v1",
+            "rule": (
+                "Facts come from provider payloads; calculations are deterministic; "
+                "inferences are labeled."
+            ),
+            "content_sync_status": content_sync_status or "unknown",
+        },
+        "observed_facts": observed_facts,
+        "computed_insights": computed_insights,
+        "inferred_insights": inferred_insights,
+        "missing_data": missing_data,
+    }
+
+
+def _truth_item(
+    *,
+    key: str,
+    label: str,
+    value: Any,
+    source: str,
+    confidence: str,
+    evidence: str,
+    is_inferred: bool = False,
+    method: str | None = None,
+) -> dict[str, Any]:
+    item = {
+        "key": key,
+        "label": label,
+        "value": value,
+        "source": source,
+        "confidence": confidence,
+        "is_inferred": is_inferred,
+        "evidence": evidence,
+    }
+    if method:
+        item["method"] = method
+    return item
+
+
+def _missing_item(
+    *,
+    key: str,
+    label: str,
+    reason: str,
+    next_step: str,
+) -> dict[str, str]:
+    return {
+        "key": key,
+        "label": label,
+        "reason": reason,
+        "next_step": next_step,
     }
 
 
