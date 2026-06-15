@@ -202,11 +202,19 @@ def _session_response(row: dict) -> SocialOnboardingSessionResponse:
 def _reference_response(row: dict) -> SocialReferenceProfileResponse:
     return SocialReferenceProfileResponse(
         id=row["id"],
+        public_reference_profile_id=row.get("public_reference_profile_id"),
         provider=row["provider"],
         handle=row["handle"],
         label=row.get("label"),
         profile_url=row.get("profile_url"),
         status=row["status"],
+        sync_status=row.get("sync_status") or "manual_pending",
+        global_sync_status=row.get("global_sync_status"),
+        public_contents_count=int(row.get("public_contents_count") or 0),
+        last_synced_at=row.get("last_synced_at"),
+        global_last_synced_at=row.get("global_last_synced_at"),
+        data_truth=row.get("data_truth"),
+        comparison_summary=row.get("comparison_summary"),
         created_at=row["created_at"],
     )
 

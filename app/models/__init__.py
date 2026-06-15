@@ -28,6 +28,8 @@ from app.models.social_onboarding import (
     SocialOnboardingSession,
     SocialPhylloAccount,
     SocialPhylloUser,
+    SocialPublicReferenceContent,
+    SocialPublicReferenceProfile,
     SocialReferenceProfile,
 )
 
@@ -61,6 +63,8 @@ __all__ = [
     "SocialOnboardingSession",
     "SocialPhylloAccount",
     "SocialPhylloUser",
+    "SocialPublicReferenceContent",
+    "SocialPublicReferenceProfile",
     "SocialReferenceProfile",
     "TeamInvite",
     "Tenant",

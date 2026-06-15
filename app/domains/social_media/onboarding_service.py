@@ -582,28 +582,77 @@ class SocialOnboardingService:
         self._get_session(current=current, session_id=session_id)
         provider = _normalize_provider(provider)
         normalized_handle = _normalize_handle(handle)
+        public_reference = self.db.execute(
+            text(
+                """
+                INSERT INTO social_public_reference_profiles (
+                  provider,
+                  handle,
+                  display_name,
+                  profile_url,
+                  source,
+                  sync_status,
+                  data_truth
+                )
+                VALUES (
+                  :provider,
+                  :handle,
+                  NULL,
+                  NULL,
+                  'manual',
+                  'manual_pending',
+                  CAST(:data_truth AS jsonb)
+                )
+                ON CONFLICT (provider, handle)
+                DO UPDATE SET
+                  display_name = COALESCE(
+                    EXCLUDED.display_name,
+                    social_public_reference_profiles.display_name
+                  ),
+                  profile_url = COALESCE(
+                    EXCLUDED.profile_url,
+                    social_public_reference_profiles.profile_url
+                  ),
+                  updated_at = NOW()
+                RETURNING id, sync_status, last_synced_at, data_truth
+                """
+            ),
+            {
+                "provider": provider,
+                "handle": normalized_handle,
+                "data_truth": json.dumps(_manual_reference_truth()),
+            },
+        ).mappings().one()
         row = self.db.execute(
             text(
                 """
                 INSERT INTO social_reference_profiles (
                   tenant_id,
                   onboarding_session_id,
+                  public_reference_profile_id,
                   created_by_membership_id,
                   provider,
                   handle,
                   label,
                   profile_url,
-                  metadata_json
+                  sync_status,
+                  last_synced_at,
+                  metadata_json,
+                  comparison_summary
                 )
                 VALUES (
                   :tenant_id,
                   :session_id,
+                  :public_reference_profile_id,
                   :membership_id,
                   :provider,
                   :handle,
                   :label,
                   :profile_url,
-                  '{}'::jsonb
+                  :sync_status,
+                  :last_synced_at,
+                  CAST(:metadata_json AS jsonb),
+                  CAST(:comparison_summary AS jsonb)
                 )
                 ON CONFLICT (
                   tenant_id,
@@ -612,8 +661,13 @@ class SocialOnboardingService:
                   handle
                 )
                 DO UPDATE SET
+                  public_reference_profile_id = EXCLUDED.public_reference_profile_id,
                   label = EXCLUDED.label,
                   profile_url = EXCLUDED.profile_url,
+                  sync_status = EXCLUDED.sync_status,
+                  last_synced_at = EXCLUDED.last_synced_at,
+                  metadata_json = EXCLUDED.metadata_json,
+                  comparison_summary = EXCLUDED.comparison_summary,
                   status = 'active',
                   updated_at = NOW()
                 RETURNING *
@@ -622,15 +676,49 @@ class SocialOnboardingService:
             {
                 "tenant_id": str(current.tenant_id),
                 "session_id": session_id,
+                "public_reference_profile_id": str(public_reference["id"]),
                 "membership_id": str(current.membership_id),
                 "provider": provider,
                 "handle": normalized_handle,
                 "label": label,
                 "profile_url": profile_url,
+                "sync_status": public_reference["sync_status"] or "manual_pending",
+                "last_synced_at": public_reference["last_synced_at"],
+                "metadata_json": json.dumps(
+                    {
+                        "source": "manual_input",
+                        "public_reference_profile_id": str(public_reference["id"]),
+                        "public_data_synced": bool(public_reference["last_synced_at"]),
+                    }
+                ),
+                "comparison_summary": json.dumps(
+                    {
+                        "status": "pending_public_sync",
+                        "next_step": (
+                            "Sincronizar dados publicos da referencia por Phyllo Creator "
+                            "Search ou Instagram Business Discovery."
+                        ),
+                    }
+                ),
             },
         ).mappings().one()
+        public_contents_count = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM social_public_reference_contents
+                WHERE reference_profile_id = :reference_profile_id
+                """
+            ),
+            {"reference_profile_id": str(public_reference["id"])},
+        ).scalar_one()
         self.db.commit()
-        return dict(row)
+        reference = dict(row)
+        reference["global_sync_status"] = public_reference["sync_status"]
+        reference["global_last_synced_at"] = public_reference["last_synced_at"]
+        reference["public_contents_count"] = int(public_contents_count or 0)
+        reference["data_truth"] = public_reference["data_truth"]
+        return reference
 
     def enqueue_diagnostic(
         self,
@@ -1433,12 +1521,35 @@ class SocialOnboardingService:
         rows = self.db.execute(
             text(
                 """
-                SELECT *
-                FROM social_reference_profiles
-                WHERE tenant_id = :tenant_id
-                  AND onboarding_session_id = :session_id
-                  AND status = 'active'
-                ORDER BY created_at ASC, id ASC
+                WITH refs AS (
+                  SELECT *
+                  FROM social_reference_profiles
+                  WHERE tenant_id = :tenant_id
+                    AND onboarding_session_id = :session_id
+                    AND status = 'active'
+                ),
+                content_counts AS (
+                  SELECT reference_profile_id, COUNT(*) AS public_contents_count
+                  FROM social_public_reference_contents
+                  WHERE reference_profile_id IN (
+                    SELECT public_reference_profile_id
+                    FROM refs
+                    WHERE public_reference_profile_id IS NOT NULL
+                  )
+                  GROUP BY reference_profile_id
+                )
+                SELECT
+                  refs.*,
+                  public_refs.sync_status AS global_sync_status,
+                  public_refs.last_synced_at AS global_last_synced_at,
+                  public_refs.data_truth AS data_truth,
+                  COALESCE(content_counts.public_contents_count, 0) AS public_contents_count
+                FROM refs
+                LEFT JOIN social_public_reference_profiles AS public_refs
+                  ON public_refs.id = refs.public_reference_profile_id
+                LEFT JOIN content_counts
+                  ON content_counts.reference_profile_id = refs.public_reference_profile_id
+                ORDER BY refs.created_at ASC, refs.id ASC
                 """
             ),
             {"tenant_id": tenant_id, "session_id": session_id},
@@ -1872,6 +1983,153 @@ def _top_count_key(values: dict[str, int]) -> str | None:
     return max(values.items(), key=lambda item: item[1])[0]
 
 
+def _manual_reference_truth() -> dict[str, Any]:
+    return {
+        "source": "manual_input",
+        "confidence": "medium",
+        "is_inferred": False,
+        "public_data_synced": False,
+        "rule": (
+            "Handle informado pelo usuario. Nao usar metricas, audiencia ou conteudos "
+            "da referencia ate a sincronizacao publica oficial."
+        ),
+    }
+
+
+def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]:
+    declared = []
+    references_with_public_data = 0
+    public_contents_total = 0
+    for reference in references:
+        public_contents_count = int(reference.get("public_contents_count") or 0)
+        sync_status = (
+            reference.get("global_sync_status")
+            or reference.get("sync_status")
+            or "manual_pending"
+        )
+        if public_contents_count:
+            references_with_public_data += 1
+            public_contents_total += public_contents_count
+        declared.append(
+            {
+                "id": str(reference.get("id")),
+                "public_reference_profile_id": (
+                    str(reference["public_reference_profile_id"])
+                    if reference.get("public_reference_profile_id")
+                    else None
+                ),
+                "provider": reference.get("provider"),
+                "handle": reference.get("handle"),
+                "label": reference.get("label"),
+                "sync_status": sync_status,
+                "public_contents_count": public_contents_count,
+            }
+        )
+
+    declared_count = len(declared)
+    if declared_count == 0:
+        status = "missing"
+        insight = "Adicione 3 a 5 referencias para calibrar melhor o diagnostico."
+        next_step = "adicionar 3 a 5 referencias publicas do mesmo segmento"
+    elif references_with_public_data == 0:
+        status = "manual_only"
+        insight = (
+            "Referencias informadas; comparativo real aguarda sincronizacao publica "
+            "oficial."
+        )
+        next_step = "sincronizar dados publicos das referencias antes de comparar performance"
+    elif references_with_public_data < min(3, declared_count):
+        status = "partially_synced"
+        insight = "Benchmark parcialmente pronto; faltam dados publicos de algumas referencias."
+        next_step = "completar sincronizacao publica das referencias restantes"
+    else:
+        status = "synced"
+        insight = "Benchmark pronto para comparar conteudos reais do mesmo segmento."
+        next_step = "gerar comparativo por formato, alcance e sinais de distribuicao"
+
+    return {
+        "status": status,
+        "minimum_references": 3,
+        "declared_count": declared_count,
+        "references_with_public_data": references_with_public_data,
+        "public_contents_total": public_contents_total,
+        "references": declared,
+        "insight": insight,
+        "next_step": next_step,
+        "truth_rule": (
+            "Referencias manuais calibram contexto. Comparativos de performance so podem "
+            "usar dados publicos sincronizados por fonte oficial."
+        ),
+    }
+
+
+def _build_specialist_brief(
+    *,
+    snapshot: dict[str, Any],
+    content_metrics: dict[str, Any],
+    top_contents: list[dict[str, Any]],
+    segment: dict[str, Any],
+    reference_context: dict[str, Any],
+) -> dict[str, Any]:
+    contents_analyzed = int(snapshot.get("content_items_count") or 0)
+    has_profile_facts = bool(snapshot.get("followers_count") or snapshot.get("bio"))
+    has_content_facts = contents_analyzed > 0 and bool(top_contents)
+    has_reference_facts = reference_context["references_with_public_data"] > 0
+    mode = "profile_only"
+    if has_reference_facts:
+        mode = "profile_plus_references"
+    elif reference_context["declared_count"]:
+        mode = "profile_plus_manual_reference_context"
+
+    blocked_inputs = []
+    if not has_content_facts:
+        blocked_inputs.append("post_level_engagement")
+    if not has_reference_facts:
+        blocked_inputs.append("public_reference_performance")
+    blocked_inputs.append("audience_demographics")
+
+    return {
+        "version": "social_specialist_brief_v1",
+        "analysis_mode": mode,
+        "ready_for_ai": bool(has_profile_facts and has_content_facts),
+        "segment_hypothesis": {
+            "name": segment.get("name"),
+            "confidence": segment.get("confidence"),
+            "is_inferred": True,
+            "evidence": segment.get("signals", []),
+        },
+        "inputs": {
+            "profile_snapshot": {
+                "source": snapshot.get("source") or "unknown",
+                "followers_count": int(snapshot.get("followers_count") or 0),
+                "posts_count": int(snapshot.get("posts_count") or 0),
+                "bio_present": bool(snapshot.get("bio")),
+            },
+            "connected_contents": {
+                "count": contents_analyzed,
+                "best_format": content_metrics.get("best_format"),
+                "engagement_rate_by_reach": content_metrics.get("engagement_rate_by_reach"),
+                "engagement_rate_by_followers": content_metrics.get(
+                    "engagement_rate_by_followers"
+                ),
+            },
+            "references": {
+                "declared_count": reference_context["declared_count"],
+                "synced_count": reference_context["references_with_public_data"],
+                "public_contents_total": reference_context["public_contents_total"],
+            },
+        },
+        "guardrails": [
+            "Nao afirmar demografia sem dado retornado por fonte conectada.",
+            "Nao comparar referencias sem conteudos publicos sincronizados.",
+            "Usar top_contents reais como evidencia para toda recomendacao de formato.",
+            "Separar fato, calculo e inferencia em qualquer resposta gerada por IA.",
+        ],
+        "blocked_inputs": blocked_inputs,
+        "next_analysis_step": reference_context["next_step"],
+    }
+
+
 def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:
     objective = session.get("objective") or "grow_audience"
     snapshot = session.get("profile_snapshot") or {}
@@ -1893,6 +2151,7 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
     )
     effective_engagement = real_engagement or engagement
     reference_handles = [f"@{ref['handle']}" for ref in references[:5]]
+    reference_context = _build_reference_context(references)
     segment = _infer_segment(
         handle=handle,
         objective=objective,
@@ -1917,7 +2176,12 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         + (8 if content_metrics.get("best_format") else 0)
         + len(reference_handles) * 3,
     )
-    benchmark_fit = min(100, 50 + len(reference_handles) * 8)
+    benchmark_fit = min(
+        100,
+        42
+        + min(reference_context["declared_count"] * 5, 20)
+        + min(reference_context["references_with_public_data"] * 11, 38),
+    )
     engagement_score = min(100, 38 + int(effective_engagement * 7) + min(contents_analyzed * 3, 18))
     top_content_lines = _top_content_lines(top_contents)
     truth = _build_truth_sections(
@@ -1932,6 +2196,14 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
             "benchmark_fit": benchmark_fit,
         },
         references=reference_handles,
+        reference_context=reference_context,
+    )
+    specialist_brief = _build_specialist_brief(
+        snapshot=snapshot,
+        content_metrics=content_metrics,
+        top_contents=top_contents,
+        segment=segment,
+        reference_context=reference_context,
     )
 
     return {
@@ -1974,6 +2246,8 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         "truth_contract": truth["truth_contract"],
         "content_metrics": content_metrics,
         "top_contents": top_contents,
+        "reference_context": reference_context,
+        "specialist_brief": specialist_brief,
         "audience": {
             "summary": (
                 _audience_summary(segment_name=segment["name"], bio=bio)
@@ -2016,16 +2290,12 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         ],
         "benchmarks": {
             "references": reference_handles,
-            "insight": (
-                "Referencias suficientes para calibrar tom e formatos."
-                if reference_handles
-                else "Adicione 3 a 5 referencias para calibrar melhor o diagnostico."
-            ),
+            "insight": reference_context["insight"],
         },
         "next_actions": [
             "validar a promessa da bio contra o publico-alvo principal",
             "separar os 3 conteudos com maior reach/view para mapear formato e gancho",
-            "criar calendario inicial de 7 dias com 2 testes de formato",
+            reference_context["next_step"],
         ],
     }
 
@@ -2038,6 +2308,7 @@ def _build_truth_sections(
     segment: dict[str, Any],
     scores: dict[str, int],
     references: list[str],
+    reference_context: dict[str, Any],
 ) -> dict[str, Any]:
     contents_analyzed = int(snapshot.get("content_items_count") or 0)
     content_sync_status = None
@@ -2178,6 +2449,18 @@ def _build_truth_sections(
                     "ainda nao foi integrada."
                 ),
                 next_step="Adicionar 3 a 5 referencias do mesmo segmento no proximo corte.",
+            )
+        )
+    elif not reference_context["references_with_public_data"]:
+        missing_data.append(
+            _missing_item(
+                key="reference_public_metrics",
+                label="Metricas publicas das referencias",
+                reason=(
+                    "As referencias foram informadas, mas nenhum conteudo publico "
+                    "delas foi sincronizado ainda."
+                ),
+                next_step=reference_context["next_step"],
             )
         )
     missing_data.append(

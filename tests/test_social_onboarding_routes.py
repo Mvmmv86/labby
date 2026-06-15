@@ -144,11 +144,19 @@ def make_reference_row(**overrides):
     now = datetime(2026, 6, 8, tzinfo=UTC)
     row = {
         "id": REFERENCE_ID,
+        "public_reference_profile_id": None,
         "provider": "instagram",
         "handle": "referencia",
         "label": "Referencia",
         "profile_url": "https://instagram.com/referencia",
         "status": "active",
+        "sync_status": "manual_pending",
+        "global_sync_status": "manual_pending",
+        "public_contents_count": 0,
+        "last_synced_at": None,
+        "global_last_synced_at": None,
+        "data_truth": {"source": "manual_input"},
+        "comparison_summary": {},
         "created_at": now,
     }
     row.update(overrides)
@@ -334,4 +342,6 @@ def test_add_reference_contract() -> None:
 
     assert response.status_code == 201
     assert response.json()["handle"] == "referencia_crypto"
+    assert response.json()["sync_status"] == "manual_pending"
+    assert response.json()["public_contents_count"] == 0
     assert service.reference_payload["provider"] == "x"

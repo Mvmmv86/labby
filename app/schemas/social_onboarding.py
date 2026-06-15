@@ -48,11 +48,19 @@ class SocialOnboardingPhylloCompleteRequest(BaseModel):
 
 class SocialReferenceProfileResponse(BaseModel):
     id: UUID
+    public_reference_profile_id: UUID | None = None
     provider: str
     handle: str
     label: str | None = None
     profile_url: str | None = None
     status: str
+    sync_status: str = "manual_pending"
+    global_sync_status: str | None = None
+    public_contents_count: int = 0
+    last_synced_at: datetime | None = None
+    global_last_synced_at: datetime | None = None
+    data_truth: dict[str, Any] | None = None
+    comparison_summary: dict[str, Any] | None = None
     created_at: datetime
 
 

@@ -214,7 +214,7 @@ def test_social_onboarding_rediagnose_uses_new_job_version_real_postgres(
             """
         ),
         {"tenant_id": TENANT_1},
-    ).scalar_one()
+    ).mappings().one()
     assert job_count == 2
 
 
@@ -467,6 +467,111 @@ def test_social_onboarding_diagnostic_uses_real_phyllo_content_metrics(
     assert content_rows[0]["raw_payload"]["engagement"]["comment_count"] == 12
     assert content_rows[0]["data_truth"]["source"] == "phyllo"
     assert float(content_rows[0]["engagement_rate_by_followers"]) == 3.81
+
+
+def test_social_onboarding_reference_profiles_are_globally_deduped(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session_one = service.create_session(current=current_one(), objective="benchmarking")
+    session_two = service.create_session(current=current_two(), objective="benchmarking")
+
+    reference_one = service.add_reference(
+        current=current_one(),
+        session_id=str(session_one["id"]),
+        provider="instagram",
+        handle="@ReferenciaCrypto",
+        label="Referencia crypto",
+        profile_url="https://instagram.com/referenciacrypto",
+    )
+    reference_two = service.add_reference(
+        current=current_two(),
+        session_id=str(session_two["id"]),
+        provider="instagram",
+        handle="referenciacrypto",
+        label="Referencia para outro tenant",
+        profile_url=None,
+    )
+
+    assert (
+        reference_one["public_reference_profile_id"]
+        == reference_two["public_reference_profile_id"]
+    )
+    assert reference_one["sync_status"] == "manual_pending"
+    assert reference_one["public_contents_count"] == 0
+    assert reference_one["label"] == "Referencia crypto"
+    assert reference_one["profile_url"] == "https://instagram.com/referenciacrypto"
+
+    global_row = db_session.execute(
+        text(
+            """
+            SELECT
+              COUNT(*) AS total,
+              MAX(display_name) AS display_name,
+              MAX(profile_url) AS profile_url
+            FROM social_public_reference_profiles
+            WHERE provider = 'instagram'
+              AND handle = 'referenciacrypto'
+            """
+        )
+    ).mappings().one()
+    link_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM social_reference_profiles
+            WHERE public_reference_profile_id = :public_reference_profile_id
+            """
+        ),
+        {"public_reference_profile_id": reference_one["public_reference_profile_id"]},
+    ).scalar_one()
+
+    assert global_row["total"] == 1
+    assert global_row["display_name"] is None
+    assert global_row["profile_url"] is None
+    assert link_count == 2
+
+
+def test_social_onboarding_report_marks_manual_references_as_unsynced(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@referencia_crypto",
+        label="Referencia crypto",
+        profile_url=None,
+    )
+
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=analyzing["analysis_version"],
+    )
+
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    report = ready["analysis_report"]
+    assert report["reference_context"]["status"] == "manual_only"
+    assert report["reference_context"]["declared_count"] == 1
+    assert report["reference_context"]["references_with_public_data"] == 0
+    assert report["specialist_brief"]["analysis_mode"] == "profile_plus_manual_reference_context"
+    assert report["specialist_brief"]["ready_for_ai"] is False
+    assert "public_reference_performance" in report["specialist_brief"]["blocked_inputs"]
+    assert any(item["key"] == "reference_public_metrics" for item in report["missing_data"])
 
 
 def test_social_onboarding_diagnostic_degrades_when_phyllo_contents_fail(
