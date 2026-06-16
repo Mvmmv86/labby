@@ -621,6 +621,76 @@ def test_social_onboarding_reference_profiles_are_globally_deduped(
     assert sync_job_count == 1
 
 
+def test_social_onboarding_reference_sync_retry_requeues_new_generation(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@evandro_pit",
+        label="Evandro",
+        profile_url=None,
+    )
+    public_reference_id = str(reference["public_reference_profile_id"])
+
+    db_session.execute(
+        text(
+            """
+            UPDATE social_public_reference_profiles
+            SET sync_status = 'failed',
+                failure_count = 99,
+                next_sync_after = NOW() + INTERVAL '1 day',
+                data_truth = data_truth || '{"last_sync_error_code":"apify_not_configured"}'::jsonb
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE social_reference_profiles
+            SET sync_status = 'failed',
+                comparison_summary = '{"status":"failed"}'::jsonb
+            WHERE id = :reference_id
+            """
+        ),
+        {"reference_id": str(reference["id"])},
+    )
+    db_session.commit()
+
+    retried_reference, job = service.enqueue_reference_sync(
+        current=current_one(),
+        session_id=str(session["id"]),
+        reference_id=str(reference["id"]),
+    )
+
+    assert job is not None
+    assert job.job_type == "social.references.sync"
+    assert job.idempotency_key.endswith(":v2")
+    assert retried_reference["sync_status"] == "pending"
+    assert retried_reference["global_sync_status"] == "pending"
+    assert retried_reference["data_truth"]["public_data_sync_requested"] is True
+    assert retried_reference["comparison_summary"]["status"] == "pending_public_sync"
+
+    global_row = db_session.execute(
+        text(
+            """
+            SELECT sync_status, sync_generation, next_sync_after
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().one()
+    assert global_row["sync_status"] == "pending"
+    assert global_row["sync_generation"] == 2
+    assert global_row["next_sync_after"] is None
+
+
 def test_social_onboarding_public_reference_sync_persists_apify_profile_and_posts(
     db_session: Session,
 ) -> None:

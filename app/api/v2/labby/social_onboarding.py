@@ -19,6 +19,7 @@ from app.schemas.social_onboarding import (
     SocialOnboardingSessionResponse,
     SocialReferenceProfileCreate,
     SocialReferenceProfileResponse,
+    SocialReferenceProfileSyncResponse,
 )
 
 router = APIRouter(prefix="/social/onboarding", tags=["social-onboarding"])
@@ -158,6 +159,27 @@ def add_reference(
             label=data.label,
             profile_url=data.profile_url,
         )
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/references/{reference_id}/sync",
+    response_model=SocialReferenceProfileSyncResponse,
+)
+def sync_reference(
+    session_id: UUID,
+    reference_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialReferenceProfileSyncResponse:
+    reference, job = service.enqueue_reference_sync(
+        current=current,
+        session_id=str(session_id),
+        reference_id=str(reference_id),
+    )
+    return SocialReferenceProfileSyncResponse(
+        reference=_reference_response(reference),
+        job=_job_response(job) if job else None,
     )
 
 

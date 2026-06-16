@@ -72,6 +72,11 @@ class SocialOnboardingJobResponse(BaseModel):
     idempotency_key: str
 
 
+class SocialReferenceProfileSyncResponse(BaseModel):
+    reference: SocialReferenceProfileResponse
+    job: SocialOnboardingJobResponse | None = None
+
+
 class SocialOnboardingSessionResponse(BaseModel):
     id: UUID
     tenant_id: UUID

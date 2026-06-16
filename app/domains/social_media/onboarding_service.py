@@ -809,6 +809,124 @@ class SocialOnboardingService:
         reference["data_truth"] = public_reference["data_truth"]
         return reference
 
+    def enqueue_reference_sync(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+        reference_id: str,
+    ) -> tuple[dict[str, Any], JobRecord | None]:
+        self._get_session(current=current, session_id=session_id)
+        reference = self._get_reference(
+            tenant_id=str(current.tenant_id),
+            session_id=session_id,
+            reference_id=reference_id,
+        )
+        provider = _normalize_provider(str(reference["provider"]))
+        handle = _normalize_handle(str(reference["handle"]))
+        public_reference_profile_id = reference.get("public_reference_profile_id")
+
+        if not public_reference_profile_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Referencia publica ainda nao possui registro global",
+            )
+        if provider != "instagram":
+            raise HTTPException(
+                status_code=409,
+                detail="Sincronizacao publica automatica ainda suporta Instagram no MVP",
+            )
+
+        if reference.get("global_sync_status") == "syncing":
+            self.db.rollback()
+            return reference, None
+
+        self._enforce_public_reference_sync_budget(provider=provider)
+        public_reference = self.db.execute(
+            text(
+                """
+                UPDATE social_public_reference_profiles
+                SET sync_status = 'pending',
+                    sync_generation = sync_generation + 1,
+                    next_sync_after = NULL,
+                    data_truth = data_truth || CAST(:data_truth AS jsonb),
+                    updated_at = NOW()
+                WHERE id = :public_reference_profile_id
+                  AND provider = :provider
+                  AND handle = :handle
+                  AND sync_status <> 'syncing'
+                RETURNING
+                  id,
+                  sync_status,
+                  sync_generation,
+                  last_synced_at,
+                  data_truth
+                """
+            ),
+            {
+                "public_reference_profile_id": str(public_reference_profile_id),
+                "provider": provider,
+                "handle": handle,
+                "data_truth": json.dumps(
+                    {
+                        "public_data_sync_requested": True,
+                        "public_data_synced": False,
+                        "last_sync_error_code": None,
+                        "last_sync_error_message": None,
+                    }
+                ),
+            },
+        ).mappings().first()
+        if public_reference is None:
+            self.db.rollback()
+            return self._get_reference(
+                tenant_id=str(current.tenant_id),
+                session_id=session_id,
+                reference_id=reference_id,
+            ), None
+
+        self.db.execute(
+            text(
+                """
+                UPDATE social_reference_profiles
+                SET sync_status = 'pending',
+                    comparison_summary = CAST(:comparison_summary AS jsonb),
+                    updated_at = NOW()
+                WHERE public_reference_profile_id = :public_reference_profile_id
+                  AND status = 'active'
+                """
+            ),
+            {
+                "public_reference_profile_id": str(public_reference_profile_id),
+                "comparison_summary": json.dumps(
+                    {
+                        "status": "pending_public_sync",
+                        "next_step": (
+                            "A Labby esta sincronizando dados publicos por infraestrutura "
+                            "interna; o cliente nao precisa sair da plataforma."
+                        ),
+                    }
+                ),
+            },
+        )
+        sync_generation = int(public_reference["sync_generation"] or 0)
+        job = self._enqueue_public_reference_sync_job(
+            tenant_id=str(current.tenant_id),
+            membership_id=str(current.membership_id),
+            session_id=session_id,
+            public_reference_profile_id=str(public_reference_profile_id),
+            provider=provider,
+            handle=handle,
+            sync_generation=sync_generation,
+            commit=False,
+        )
+        self.db.commit()
+        return self._get_reference(
+            tenant_id=str(current.tenant_id),
+            session_id=session_id,
+            reference_id=reference_id,
+        ), job
+
     def enqueue_diagnostic(
         self,
         *,
@@ -2356,6 +2474,56 @@ class SocialOnboardingService:
             session_id=str(row["id"]),
         )
         return row
+
+    def _get_reference(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        reference_id: str,
+    ) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                WITH content_counts AS (
+                  SELECT reference_profile_id, COUNT(*) AS public_contents_count
+                  FROM social_public_reference_contents
+                  WHERE reference_profile_id = (
+                    SELECT public_reference_profile_id
+                    FROM social_reference_profiles
+                    WHERE tenant_id = :tenant_id
+                      AND onboarding_session_id = :session_id
+                      AND id = :reference_id
+                      AND status = 'active'
+                  )
+                  GROUP BY reference_profile_id
+                )
+                SELECT
+                  refs.*,
+                  public_refs.sync_status AS global_sync_status,
+                  public_refs.last_synced_at AS global_last_synced_at,
+                  public_refs.data_truth AS data_truth,
+                  COALESCE(content_counts.public_contents_count, 0) AS public_contents_count
+                FROM social_reference_profiles AS refs
+                LEFT JOIN social_public_reference_profiles AS public_refs
+                  ON public_refs.id = refs.public_reference_profile_id
+                LEFT JOIN content_counts
+                  ON content_counts.reference_profile_id = refs.public_reference_profile_id
+                WHERE refs.tenant_id = :tenant_id
+                  AND refs.onboarding_session_id = :session_id
+                  AND refs.id = :reference_id
+                  AND refs.status = 'active'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "reference_id": reference_id,
+            },
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Referencia publica nao encontrada")
+        return dict(row)
 
     def _list_references(self, *, tenant_id: str, session_id: str) -> list[dict[str, Any]]:
         rows = self.db.execute(

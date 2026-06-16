@@ -123,6 +123,24 @@ class FakeSocialOnboardingService:
         }
         return make_reference_row(provider=provider, handle=handle.strip().lstrip("@").lower())
 
+    def enqueue_reference_sync(self, *, current, session_id, reference_id):
+        self.current = current
+        self.reference_payload = {
+            "session_id": session_id,
+            "reference_id": reference_id,
+        }
+        return (
+            make_reference_row(
+                id=UUID(str(reference_id)),
+                sync_status="pending",
+                global_sync_status="pending",
+            ),
+            make_job_record(
+                job_type="social.references.sync",
+                idempotency_key="social.references.sync:instagram:referencia:v2",
+            ),
+        )
+
     def enqueue_diagnostic(self, *, current, session_id):
         self.current = current
         return make_session_row(id=UUID(str(session_id)), status="analyzing"), make_job_record()
@@ -345,3 +363,21 @@ def test_add_reference_contract() -> None:
     assert response.json()["sync_status"] == "manual_pending"
     assert response.json()["public_contents_count"] == 0
     assert service.reference_payload["provider"] == "x"
+
+
+def test_sync_reference_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/references/{REFERENCE_ID}/sync",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reference"]["id"] == str(REFERENCE_ID)
+    assert body["reference"]["sync_status"] == "pending"
+    assert body["job"]["job_type"] == "social.references.sync"
+    assert service.reference_payload == {
+        "session_id": str(SESSION_ID),
+        "reference_id": str(REFERENCE_ID),
+    }
