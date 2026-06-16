@@ -2149,9 +2149,9 @@ class SocialOnboardingService:
                 SET display_name = :display_name,
                     profile_url = :profile_url,
                     source = 'apify',
-                    sync_status = :sync_status,
+                    sync_status = CAST(:sync_status AS varchar),
                     failure_count = CASE
-                      WHEN :sync_status = 'synced' THEN 0
+                      WHEN CAST(:sync_status AS varchar) = 'synced' THEN 0
                       ELSE failure_count + 1
                     END,
                     profile_snapshot = CAST(:profile_snapshot AS jsonb),
