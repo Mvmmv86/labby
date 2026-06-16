@@ -129,6 +129,73 @@ class FakePhylloClient:
         )[:limit]
 
 
+class FakeApifyClient:
+    def __init__(self) -> None:
+        self.profile_calls: list[str] = []
+        self.post_calls: list[dict[str, Any]] = []
+        self.profile_items_by_handle: dict[str, list[dict[str, Any]]] = {}
+        self.post_items_by_handle: dict[str, list[dict[str, Any]]] = {}
+        self.profile_errors: set[str] = set()
+        self.post_errors: set[str] = set()
+
+    def fetch_instagram_profile(self, *, handle: str) -> list[dict[str, Any]]:
+        self.profile_calls.append(handle)
+        if handle in self.profile_errors:
+            from app.integrations.apify import ApifyProviderError
+
+            raise ApifyProviderError("Apify profile temporary failure")
+        return self.profile_items_by_handle.get(
+            handle,
+            [
+                {
+                    "username": handle,
+                    "fullName": "Gabriel Vieira | Cripto",
+                    "followersCount": 1368,
+                    "followsCount": 1375,
+                    "postsCount": 31,
+                    "biography": "Eu sou Trader e nao sou Holder",
+                    "profilePicUrl": "https://cdn.example/avatar.jpg",
+                    "url": f"https://www.instagram.com/{handle}/",
+                    "private": False,
+                    "verified": False,
+                    "isBusinessAccount": False,
+                }
+            ],
+        )
+
+    def fetch_instagram_posts(self, *, handle: str, limit: int) -> list[dict[str, Any]]:
+        self.post_calls.append({"handle": handle, "limit": limit})
+        if handle in self.post_errors:
+            from app.integrations.apify import ApifyProviderError
+
+            raise ApifyProviderError("Apify posts temporary failure")
+        return self.post_items_by_handle.get(
+            handle,
+            [
+                {
+                    "id": "3727959046017062220",
+                    "shortCode": "DO8XwA",
+                    "url": "https://www.instagram.com/p/DO8XwA/",
+                    "caption": "O Atacama foi so o inicio de um mundo inteiro.",
+                    "commentsCount": 5,
+                    "likesCount": 58,
+                    "timestamp": "2026-04-29T19:58:06.000Z",
+                    "productType": "clips",
+                },
+                {
+                    "id": "3886212427159640420",
+                    "shortCode": "DXumZz",
+                    "url": "https://www.instagram.com/p/DXumZz/",
+                    "caption": "Nem nos meus sonhos mais impossiveis.",
+                    "commentsCount": 12,
+                    "likesCount": 35,
+                    "timestamp": "2026-02-02T12:46:40.000Z",
+                    "productType": "clips",
+                },
+            ],
+        )[:limit]
+
+
 def make_phyllo_service(
     db_session: Session,
     phyllo_client: FakePhylloClient,
@@ -137,6 +204,17 @@ def make_phyllo_service(
         db_session,
         job_queue=JobQueueService(db_session),
         phyllo_client=phyllo_client,
+    )
+
+
+def make_apify_service(
+    db_session: Session,
+    apify_client: FakeApifyClient,
+) -> SocialOnboardingService:
+    return SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        apify_client=apify_client,
     )
 
 
@@ -497,7 +575,7 @@ def test_social_onboarding_reference_profiles_are_globally_deduped(
         reference_one["public_reference_profile_id"]
         == reference_two["public_reference_profile_id"]
     )
-    assert reference_one["sync_status"] == "manual_pending"
+    assert reference_one["sync_status"] == "pending"
     assert reference_one["public_contents_count"] == 0
     assert reference_one["label"] == "Referencia crypto"
     assert reference_one["profile_url"] == "https://instagram.com/referenciacrypto"
@@ -530,6 +608,563 @@ def test_social_onboarding_reference_profiles_are_globally_deduped(
     assert global_row["display_name"] is None
     assert global_row["profile_url"] is None
     assert link_count == 2
+    sync_job_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM jobs
+            WHERE job_type = 'social.references.sync'
+              AND payload ->> 'handle' = 'referenciacrypto'
+            """
+        )
+    ).scalar_one()
+    assert sync_job_count == 1
+
+
+def test_social_onboarding_public_reference_sync_persists_apify_profile_and_posts(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    service = make_apify_service(db_session, apify_client)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@gvcripto",
+        label="Referencia real",
+        profile_url=None,
+    )
+    public_reference_id = str(reference["public_reference_profile_id"])
+    generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).scalar_one()
+
+    result = service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=public_reference_id,
+        provider="instagram",
+        handle="gvcripto",
+        sync_generation=int(generation),
+        session_id=str(session["id"]),
+    )
+
+    assert result["status"] == "synced"
+    assert result["posts_synced"] == 2
+    assert result["diagnostic_job_id"] is None
+    assert apify_client.profile_calls == ["gvcripto"]
+    assert apify_client.post_calls == [{"handle": "gvcripto", "limit": 30}]
+
+    global_row = db_session.execute(
+        text(
+            """
+            SELECT
+              source,
+              sync_status,
+              display_name,
+              profile_url,
+              profile_snapshot,
+              raw_payload,
+              data_truth
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().one()
+    assert global_row["source"] == "apify"
+    assert global_row["sync_status"] == "synced"
+    assert global_row["display_name"] == "Gabriel Vieira | Cripto"
+    assert global_row["profile_url"] == "https://www.instagram.com/gvcripto/"
+    assert global_row["profile_snapshot"]["followers_count"] == 1368
+    assert global_row["raw_payload"]["username"] == "gvcripto"
+    assert global_row["data_truth"]["source"] == "apify"
+    assert global_row["data_truth"]["public_data_only"] is True
+
+    content_rows = db_session.execute(
+        text(
+            """
+            SELECT
+              external_id,
+              content_type,
+              content_format,
+              title,
+              metrics_json,
+              raw_payload,
+              data_truth,
+              engagement_rate_by_followers,
+              engagement_rate_by_reach
+            FROM social_public_reference_contents
+            WHERE reference_profile_id = :public_reference_id
+            ORDER BY performance_score DESC
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().all()
+    assert len(content_rows) == 2
+    assert content_rows[0]["external_id"] == "3886212427159640420"
+    assert content_rows[0]["content_type"] == "REELS"
+    assert content_rows[0]["content_format"] == "VIDEO"
+    assert content_rows[0]["metrics_json"]["likes"] == 35
+    assert content_rows[0]["metrics_json"]["comments"] == 12
+    assert content_rows[0]["metrics_json"]["reach"] is None
+    assert content_rows[0]["metrics_json"]["shares"] is None
+    assert content_rows[0]["raw_payload"]["shortCode"] == "DXumZz"
+    assert content_rows[0]["data_truth"]["source"] == "apify"
+    assert "reach" in content_rows[0]["data_truth"]["unavailable_metrics"]
+    assert float(content_rows[0]["engagement_rate_by_followers"]) == 3.44
+    assert content_rows[0]["engagement_rate_by_reach"] is None
+
+    linked_reference = service.get_session(current=current_one(), session_id=str(session["id"]))
+    synced_reference = linked_reference["references"][0]
+    assert synced_reference["sync_status"] == "synced"
+    assert synced_reference["global_sync_status"] == "synced"
+    assert synced_reference["public_contents_count"] == 2
+    assert synced_reference["comparison_summary"]["public_followers_count"] == 1368
+
+
+def test_social_onboarding_public_reference_partial_sync_honors_cooldown(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    apify_client.post_items_by_handle["emptyref"] = []
+    service = make_apify_service(db_session, apify_client)
+    first_session = service.create_session(current=current_one(), objective="benchmarking")
+    second_session = service.create_session(current=current_two(), objective="benchmarking")
+
+    first_reference = service.add_reference(
+        current=current_one(),
+        session_id=str(first_session["id"]),
+        provider="instagram",
+        handle="@emptyref",
+        label=None,
+        profile_url=None,
+    )
+    public_reference_id = str(first_reference["public_reference_profile_id"])
+    generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).scalar_one()
+
+    result = service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=public_reference_id,
+        provider="instagram",
+        handle="emptyref",
+        sync_generation=int(generation),
+        session_id=str(first_session["id"]),
+    )
+
+    assert result["status"] == "partially_synced"
+    assert result["posts_synced"] == 0
+    assert apify_client.profile_calls == ["emptyref"]
+    assert apify_client.post_calls == [{"handle": "emptyref", "limit": 30}]
+
+    second_reference = service.add_reference(
+        current=current_two(),
+        session_id=str(second_session["id"]),
+        provider="instagram",
+        handle="emptyref",
+        label=None,
+        profile_url=None,
+    )
+
+    assert second_reference["sync_status"] == "partially_synced"
+    sync_job_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM jobs
+            WHERE job_type = 'social.references.sync'
+              AND payload ->> 'handle' = 'emptyref'
+            """
+        )
+    ).scalar_one()
+    global_state = db_session.execute(
+        text(
+            """
+            SELECT sync_status, failure_count, next_sync_after
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().one()
+    assert sync_job_count == 1
+    assert global_state["sync_status"] == "partially_synced"
+    assert global_state["failure_count"] == 1
+    assert global_state["next_sync_after"] is not None
+    assert apify_client.profile_calls == ["emptyref"]
+    assert apify_client.post_calls == [{"handle": "emptyref", "limit": 30}]
+
+
+def test_social_onboarding_public_reference_reaper_fails_stale_syncing(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    service = make_apify_service(db_session, apify_client)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@stuckref",
+        label=None,
+        profile_url=None,
+    )
+    public_reference_id = str(reference["public_reference_profile_id"])
+    db_session.execute(
+        text(
+            """
+            UPDATE social_public_reference_profiles
+            SET sync_status = 'syncing',
+                updated_at = NOW() - INTERVAL '2 hours'
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE social_reference_profiles
+            SET sync_status = 'syncing'
+            WHERE public_reference_profile_id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    )
+    db_session.commit()
+
+    reaped = service.reconcile_stale_public_reference_syncs(
+        stale_after_minutes=60,
+        limit=10,
+    )
+
+    assert len(reaped) == 1
+    global_state = db_session.execute(
+        text(
+            """
+            SELECT sync_status, failure_count, next_sync_after
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().one()
+    linked_state = db_session.execute(
+        text(
+            """
+            SELECT sync_status, comparison_summary
+            FROM social_reference_profiles
+            WHERE public_reference_profile_id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).mappings().one()
+    assert global_state["sync_status"] == "failed"
+    assert global_state["failure_count"] == 1
+    assert global_state["next_sync_after"] is not None
+    assert linked_state["sync_status"] == "failed"
+    assert linked_state["comparison_summary"]["error_code"] == "sync_abandoned"
+
+
+def test_social_onboarding_cleanup_deletes_orphaned_public_references(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    service = make_apify_service(db_session, apify_client)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@oldref",
+        label=None,
+        profile_url=None,
+    )
+    public_reference_id = str(reference["public_reference_profile_id"])
+    generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).scalar_one()
+    service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=public_reference_id,
+        provider="instagram",
+        handle="oldref",
+        sync_generation=int(generation),
+        session_id=str(session["id"]),
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE social_reference_profiles
+            SET status = 'archived',
+                updated_at = NOW()
+            WHERE public_reference_profile_id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    )
+    db_session.execute(
+        text(
+            """
+            UPDATE social_public_reference_profiles
+            SET updated_at = NOW() - INTERVAL '120 days'
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    )
+    db_session.commit()
+
+    deleted = service.cleanup_orphaned_public_references(retention_days=90, limit=10)
+
+    assert len(deleted) == 1
+    assert str(deleted[0]["id"]) == public_reference_id
+    global_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).scalar_one()
+    content_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM social_public_reference_contents
+            WHERE reference_profile_id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": public_reference_id},
+    ).scalar_one()
+    link_reference_id = db_session.execute(
+        text(
+            """
+            SELECT public_reference_profile_id
+            FROM social_reference_profiles
+            WHERE tenant_id = :tenant_id
+              AND handle = 'oldref'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one()
+    assert global_count == 0
+    assert content_count == 0
+    assert link_reference_id is None
+
+
+def test_social_onboarding_public_reference_sync_reprocesses_ready_session(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    service = make_apify_service(db_session, apify_client)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=analyzing["analysis_version"],
+    )
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert ready["status"] == "ready"
+    assert ready["analysis_version"] == 1
+
+    reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@gvcripto",
+        label=None,
+        profile_url=None,
+    )
+    generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": str(reference["public_reference_profile_id"])},
+    ).scalar_one()
+
+    sync_result = service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=str(reference["public_reference_profile_id"]),
+        provider="instagram",
+        handle="gvcripto",
+        sync_generation=int(generation),
+        session_id=str(session["id"]),
+    )
+
+    assert sync_result["status"] == "synced"
+    assert sync_result["diagnostic_job_id"]
+    reprocessing = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert reprocessing["status"] == "analyzing"
+    assert reprocessing["analysis_version"] == 2
+
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=2,
+    )
+    refreshed = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert refreshed["status"] == "ready"
+    assert refreshed["analysis_report"]["reference_context"]["status"] == "synced"
+    assert refreshed["analysis_report"]["reference_context"]["references_with_public_data"] == 1
+    assert refreshed["analysis_report"]["specialist_brief"]["analysis_mode"] == (
+        "profile_plus_references"
+    )
+    assert (
+        "public_reference_performance"
+        not in refreshed["analysis_report"]["specialist_brief"]["blocked_inputs"]
+    )
+
+
+def test_social_onboarding_public_reference_diagnostic_debounce(
+    db_session: Session,
+) -> None:
+    apify_client = FakeApifyClient()
+    service = make_apify_service(db_session, apify_client)
+    session = service.create_session(current=current_one(), objective="benchmarking")
+    analyzing, _ = service.connect_fake_account(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@marca",
+        display_name="Marca",
+        profile_url=None,
+        followers_count=1200,
+        posts_count=80,
+        average_engagement_rate=2.4,
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=analyzing["analysis_version"],
+    )
+
+    first_reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@gvcripto",
+        label=None,
+        profile_url=None,
+    )
+    first_generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": str(first_reference["public_reference_profile_id"])},
+    ).scalar_one()
+    first_sync = service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=str(first_reference["public_reference_profile_id"]),
+        provider="instagram",
+        handle="gvcripto",
+        sync_generation=int(first_generation),
+        session_id=str(session["id"]),
+    )
+    assert first_sync["diagnostic_job_id"]
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=2,
+    )
+    ready_with_reference = service.get_session(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+    assert ready_with_reference["status"] == "ready"
+    assert ready_with_reference["analysis_version"] == 2
+    assert ready_with_reference["analysis_report"]["reference_context"][
+        "references_with_public_data"
+    ] == 1
+
+    second_reference = service.add_reference(
+        current=current_one(),
+        session_id=str(session["id"]),
+        provider="instagram",
+        handle="@evandro_pit",
+        label=None,
+        profile_url=None,
+    )
+    second_generation = db_session.execute(
+        text(
+            """
+            SELECT sync_generation
+            FROM social_public_reference_profiles
+            WHERE id = :public_reference_id
+            """
+        ),
+        {"public_reference_id": str(second_reference["public_reference_profile_id"])},
+    ).scalar_one()
+    second_sync = service.run_public_reference_sync(
+        tenant_id=str(TENANT_1),
+        public_reference_profile_id=str(second_reference["public_reference_profile_id"]),
+        provider="instagram",
+        handle="evandro_pit",
+        sync_generation=int(second_generation),
+        session_id=str(session["id"]),
+    )
+
+    assert second_sync["status"] == "synced"
+    assert second_sync["diagnostic_job_id"] is None
+    still_ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert still_ready["status"] == "ready"
+    assert still_ready["analysis_version"] == 2
+    diagnosis_jobs = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM jobs
+            WHERE job_type = 'social.onboarding.diagnose'
+              AND payload ->> 'session_id' = :session_id
+            """
+        ),
+        {"session_id": str(session["id"])},
+    ).scalar_one()
+    assert diagnosis_jobs == 2
 
 
 def test_social_onboarding_report_marks_manual_references_as_unsynced(

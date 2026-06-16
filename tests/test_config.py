@@ -51,3 +51,8 @@ def test_staging_accepts_redis_public_rate_limit_backend() -> None:
     )
 
     assert settings.public_rate_limit_backend == "redis"
+
+
+def test_apify_run_budget_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        Settings(apify_max_total_charge_usd=0)

@@ -3,6 +3,7 @@ from app.domains.jobs.job_service import JobQueueService
 from app.domains.jobs.registry import JobExecutionContext, PermanentJobError, job_handlers
 from app.domains.social_media.onboarding_service import (
     SOCIAL_ONBOARDING_DIAGNOSE_JOB,
+    SOCIAL_REFERENCE_SYNC_JOB,
     SocialOnboardingService,
 )
 
@@ -40,3 +41,37 @@ def diagnose_social_onboarding(context: JobExecutionContext) -> dict:
                 )
                 raise PermanentJobError(str(exc)) from exc
             raise
+
+
+@job_handlers.register(SOCIAL_REFERENCE_SYNC_JOB)
+def sync_social_public_reference(context: JobExecutionContext) -> dict:
+    public_reference_profile_id = context.payload.get("public_reference_profile_id")
+    provider = context.payload.get("provider")
+    handle = context.payload.get("handle")
+    sync_generation = context.payload.get("sync_generation")
+    if not public_reference_profile_id:
+        raise PermanentJobError("public_reference_profile_id ausente")
+    if not provider or not handle:
+        raise PermanentJobError("provider/handle ausentes")
+    try:
+        generation = int(sync_generation)
+    except (TypeError, ValueError) as exc:
+        raise PermanentJobError("sync_generation invalida") from exc
+
+    with SessionLocal() as db:
+        service = SocialOnboardingService(db, job_queue=JobQueueService(db))
+        try:
+            return service.run_public_reference_sync(
+                tenant_id=context.tenant_id,
+                public_reference_profile_id=str(public_reference_profile_id),
+                provider=str(provider),
+                handle=str(handle),
+                sync_generation=generation,
+                session_id=(
+                    str(context.payload["session_id"])
+                    if context.payload.get("session_id")
+                    else None
+                ),
+            )
+        except ValueError as exc:
+            raise PermanentJobError(str(exc)) from exc

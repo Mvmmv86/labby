@@ -1,4 +1,9 @@
-from app.domains.social_media.onboarding_service import _summarize_phyllo_contents
+from datetime import UTC, datetime, timedelta
+
+from app.domains.social_media.onboarding_service import (
+    _public_reference_job_can_attempt,
+    _summarize_phyllo_contents,
+)
 
 
 def test_phyllo_engagement_rate_by_followers_is_average_per_content() -> None:
@@ -31,3 +36,28 @@ def test_phyllo_engagement_rate_by_followers_is_average_per_content() -> None:
     assert summary["content_metrics"]["interactions"] == 248
     assert summary["content_metrics"]["engagement_rate_by_followers"] == 2.95
     assert summary["content_metrics"]["engagement_rate_by_reach"] == 5.77
+
+
+def test_public_reference_job_allows_pending_but_keeps_failed_cooldown() -> None:
+    future = datetime.now(UTC) + timedelta(hours=1)
+
+    assert _public_reference_job_can_attempt(
+        {"sync_status": "pending", "next_sync_after": future},
+        circuit_breaker_failures=3,
+    )
+    assert not _public_reference_job_can_attempt(
+        {
+            "sync_status": "failed",
+            "next_sync_after": future,
+            "failure_count": 1,
+        },
+        circuit_breaker_failures=3,
+    )
+    assert not _public_reference_job_can_attempt(
+        {
+            "sync_status": "partially_synced",
+            "next_sync_after": future,
+            "failure_count": 1,
+        },
+        circuit_breaker_failures=3,
+    )

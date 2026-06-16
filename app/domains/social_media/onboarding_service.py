@@ -1,16 +1,26 @@
 import hashlib
 import json
 import logging
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings, get_settings
 from app.core.dependencies import CurrentMembership
+from app.core.rate_limit import (
+    PublicRateLimiter,
+    RateLimitUnavailable,
+    RedisFixedWindowRateLimiter,
+)
 from app.domains.jobs.job_service import JobQueueService, JobRecord
+from app.integrations.apify import (
+    ApifyClient,
+    ApifyConfigurationError,
+    ApifyProviderError,
+)
 from app.integrations.phyllo import (
     PhylloClient,
     PhylloConfigurationError,
@@ -18,6 +28,7 @@ from app.integrations.phyllo import (
 )
 
 SOCIAL_ONBOARDING_DIAGNOSE_JOB = "social.onboarding.diagnose"
+SOCIAL_REFERENCE_SYNC_JOB = "social.references.sync"
 SOCIAL_ONBOARDING_QUEUE = "worker-social-analysis"
 PHYLLO_CONNECT_TIMEOUT_MINUTES = 30
 logger = logging.getLogger(__name__)
@@ -40,11 +51,15 @@ class SocialOnboardingService:
         job_queue: JobQueueService,
         settings: Settings | None = None,
         phyllo_client: Any | None = None,
+        apify_client: Any | None = None,
+        rate_limiter: PublicRateLimiter | None = None,
     ) -> None:
         self.db = db
         self.job_queue = job_queue
         self.settings = settings or get_settings()
         self.phyllo_client = phyllo_client or PhylloClient(self.settings)
+        self.apify_client = apify_client or ApifyClient(self.settings)
+        self.rate_limiter = rate_limiter
 
     def get_current(self, *, current: CurrentMembership) -> dict[str, Any] | None:
         row = self.db.execute(
@@ -582,6 +597,37 @@ class SocialOnboardingService:
         self._get_session(current=current, session_id=session_id)
         provider = _normalize_provider(provider)
         normalized_handle = _normalize_handle(handle)
+        can_sync_publicly = provider == "instagram"
+        active_other_references = self.db.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM social_reference_profiles
+                WHERE tenant_id = :tenant_id
+                  AND onboarding_session_id = :session_id
+                  AND status = 'active'
+                  AND NOT (provider = :provider AND handle = :handle)
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "provider": provider,
+                "handle": normalized_handle,
+            },
+        ).scalar_one()
+        if int(active_other_references or 0) >= (
+            self.settings.social_onboarding_max_public_references_per_session
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Limite de referencias publicas atingido para este diagnostico",
+            )
+        if can_sync_publicly:
+            self._enforce_public_reference_add_budget(
+                tenant_id=str(current.tenant_id),
+                provider=provider,
+            )
         public_reference = self.db.execute(
             text(
                 """
@@ -605,16 +651,14 @@ class SocialOnboardingService:
                 )
                 ON CONFLICT (provider, handle)
                 DO UPDATE SET
-                  display_name = COALESCE(
-                    EXCLUDED.display_name,
-                    social_public_reference_profiles.display_name
-                  ),
-                  profile_url = COALESCE(
-                    EXCLUDED.profile_url,
-                    social_public_reference_profiles.profile_url
-                  ),
                   updated_at = NOW()
-                RETURNING id, sync_status, last_synced_at, data_truth
+                RETURNING
+                  id,
+                  sync_status,
+                  sync_generation,
+                  last_synced_at,
+                  next_sync_after,
+                  data_truth
                 """
             ),
             {
@@ -623,6 +667,50 @@ class SocialOnboardingService:
                 "data_truth": json.dumps(_manual_reference_truth()),
             },
         ).mappings().one()
+        sync_job: JobRecord | None = None
+        effective_sync_status = public_reference["sync_status"] or "manual_pending"
+        sync_generation = int(public_reference["sync_generation"] or 0)
+        if can_sync_publicly and _public_reference_needs_sync(
+            dict(public_reference),
+            circuit_breaker_failures=self.settings.apify_public_reference_circuit_breaker_failures,
+        ):
+            self._enforce_public_reference_sync_budget(provider=provider)
+            updated_public_reference = self.db.execute(
+                text(
+                    """
+                    UPDATE social_public_reference_profiles
+                    SET sync_status = 'pending',
+                        sync_generation = sync_generation + 1,
+                        updated_at = NOW()
+                    WHERE id = :public_reference_profile_id
+                      AND sync_status <> 'syncing'
+                    RETURNING
+                      id,
+                      sync_status,
+                      sync_generation,
+                      last_synced_at,
+                      next_sync_after,
+                      data_truth
+                    """
+                ),
+                {"public_reference_profile_id": str(public_reference["id"])},
+            ).mappings().first()
+            if updated_public_reference is not None:
+                public_reference = updated_public_reference
+                effective_sync_status = public_reference["sync_status"]
+                sync_generation = int(public_reference["sync_generation"] or 0)
+                sync_job = self._enqueue_public_reference_sync_job(
+                    tenant_id=str(current.tenant_id),
+                    membership_id=str(current.membership_id),
+                    session_id=session_id,
+                    public_reference_profile_id=str(public_reference["id"]),
+                    provider=provider,
+                    handle=normalized_handle,
+                    sync_generation=sync_generation,
+                    commit=False,
+                )
+            else:
+                effective_sync_status = "syncing"
         row = self.db.execute(
             text(
                 """
@@ -682,21 +770,22 @@ class SocialOnboardingService:
                 "handle": normalized_handle,
                 "label": label,
                 "profile_url": profile_url,
-                "sync_status": public_reference["sync_status"] or "manual_pending",
+                "sync_status": effective_sync_status,
                 "last_synced_at": public_reference["last_synced_at"],
                 "metadata_json": json.dumps(
                     {
                         "source": "manual_input",
                         "public_reference_profile_id": str(public_reference["id"]),
                         "public_data_synced": bool(public_reference["last_synced_at"]),
+                        "public_sync_job_id": str(sync_job.id) if sync_job else None,
                     }
                 ),
                 "comparison_summary": json.dumps(
                     {
                         "status": "pending_public_sync",
                         "next_step": (
-                            "Sincronizar dados publicos da referencia por Phyllo Creator "
-                            "Search ou Instagram Business Discovery."
+                            "A Labby buscara os dados publicos por infraestrutura interna; "
+                            "o cliente nao precisa sair da plataforma."
                         ),
                     }
                 ),
@@ -877,6 +966,220 @@ class SocialOnboardingService:
         self.db.commit()
         return {"session_id": session_id, "status": "ready"}
 
+    def run_public_reference_sync(
+        self,
+        *,
+        tenant_id: str,
+        public_reference_profile_id: str,
+        provider: str,
+        handle: str,
+        sync_generation: int,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        provider = _normalize_provider(provider)
+        normalized_handle = _normalize_handle(handle)
+
+        reference = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_public_reference_profiles
+                WHERE id = :public_reference_profile_id
+                  AND provider = :provider
+                  AND handle = :handle
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "provider": provider,
+                "handle": normalized_handle,
+            },
+        ).mappings().first()
+        if reference is None:
+            self.db.rollback()
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "skipped": True,
+                "reason": "reference_not_found",
+            }
+        if int(reference["sync_generation"] or 0) != sync_generation:
+            self.db.rollback()
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "skipped": True,
+                "reason": "stale_sync_generation",
+                "sync_generation": sync_generation,
+                "current_sync_generation": int(reference["sync_generation"] or 0),
+            }
+        if not _public_reference_job_can_attempt(
+            dict(reference),
+            circuit_breaker_failures=self.settings.apify_public_reference_circuit_breaker_failures,
+        ):
+            self.db.rollback()
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "skipped": True,
+                "reason": "fresh_or_circuit_open_reference_cache",
+                "sync_status": reference["sync_status"],
+            }
+        if provider != "instagram":
+            self._mark_public_reference_sync_result(
+                public_reference_profile_id=public_reference_profile_id,
+                status="unavailable",
+                error_code="unsupported_provider",
+                error_message="Sincronizacao publica ainda suporta Instagram no MVP",
+                commit=True,
+            )
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "status": "unavailable",
+                "reason": "unsupported_provider",
+            }
+
+        claimed = self.db.execute(
+            text(
+                """
+                UPDATE social_public_reference_profiles
+                SET sync_status = 'syncing',
+                    updated_at = NOW()
+                WHERE id = :public_reference_profile_id
+                  AND provider = :provider
+                  AND handle = :handle
+                  AND sync_generation = :sync_generation
+                  AND sync_status <> 'syncing'
+                RETURNING *
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "provider": provider,
+                "handle": normalized_handle,
+                "sync_generation": sync_generation,
+            },
+        ).mappings().first()
+        if claimed is None:
+            self.db.rollback()
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "provider": provider,
+                "handle": normalized_handle,
+                "skipped": True,
+                "reason": "sync_already_claimed",
+            }
+        self.db.execute(
+            text(
+                """
+                UPDATE social_reference_profiles
+                SET sync_status = 'syncing',
+                    updated_at = NOW()
+                WHERE public_reference_profile_id = :public_reference_profile_id
+                  AND status = 'active'
+                """
+            ),
+            {"public_reference_profile_id": public_reference_profile_id},
+        )
+        self.db.commit()
+
+        try:
+            profile_items = self.apify_client.fetch_instagram_profile(handle=normalized_handle)
+            profile_raw = profile_items[0] if profile_items else {}
+            if not profile_raw:
+                self._mark_public_reference_sync_result(
+                    public_reference_profile_id=public_reference_profile_id,
+                    status="unavailable",
+                    error_code="profile_not_found",
+                    error_message="Perfil publico nao retornou dados na fonte configurada",
+                    commit=True,
+                )
+                return {
+                    "public_reference_profile_id": public_reference_profile_id,
+                    "status": "unavailable",
+                    "reason": "profile_not_found",
+                }
+
+            normalized_profile = _normalize_apify_instagram_profile(
+                profile_raw,
+                fallback_handle=normalized_handle,
+            )
+            posts_error: str | None = None
+            try:
+                post_items = self.apify_client.fetch_instagram_posts(
+                    handle=normalized_handle,
+                    limit=self.settings.apify_instagram_max_posts_per_profile,
+                )
+            except ApifyProviderError as exc:
+                logger.warning(
+                    "apify_public_reference_posts_degraded",
+                    extra={
+                        "public_reference_profile_id": public_reference_profile_id,
+                        "provider": provider,
+                        "handle": normalized_handle,
+                    },
+                    exc_info=True,
+                )
+                post_items = []
+                posts_error = str(exc)
+
+            normalized_posts = [
+                _normalize_apify_instagram_post(
+                    item,
+                    followers_count=int(normalized_profile.get("followers_count") or 0),
+                )
+                for item in post_items[: self.settings.apify_instagram_max_posts_per_profile]
+                if isinstance(item, dict)
+            ]
+            normalized_posts = [item for item in normalized_posts if item.get("external_id")]
+            status = "synced" if normalized_posts else "partially_synced"
+            next_sync_after = datetime.now(UTC) + timedelta(
+                days=max(1, self.settings.apify_public_reference_ttl_days)
+            )
+            self._persist_public_reference_sync(
+                public_reference_profile_id=public_reference_profile_id,
+                provider=provider,
+                profile=normalized_profile,
+                profile_raw=profile_raw,
+                posts=normalized_posts,
+                sync_status=status,
+                next_sync_after=next_sync_after,
+                posts_error=posts_error,
+            )
+            diagnostic_job = None
+            if session_id:
+                diagnostic_job = self._enqueue_reference_diagnostic_if_possible(
+                    tenant_id=tenant_id,
+                    session_id=session_id,
+                    commit=False,
+                )
+            self.db.commit()
+            return {
+                "public_reference_profile_id": public_reference_profile_id,
+                "provider": provider,
+                "handle": normalized_handle,
+                "status": status,
+                "posts_synced": len(normalized_posts),
+                "diagnostic_job_id": str(diagnostic_job.id) if diagnostic_job else None,
+            }
+        except ApifyConfigurationError as exc:
+            self.db.rollback()
+            self._mark_public_reference_sync_result(
+                public_reference_profile_id=public_reference_profile_id,
+                status="failed",
+                error_code="apify_not_configured",
+                error_message="LABBY_APIFY_API_TOKEN nao configurado",
+                commit=True,
+            )
+            raise ValueError("Apify nao configurado para sincronizacao publica") from exc
+        except ApifyProviderError as exc:
+            self.db.rollback()
+            self._mark_public_reference_sync_result(
+                public_reference_profile_id=public_reference_profile_id,
+                status="failed",
+                error_code="apify_provider_error",
+                error_message=str(exc),
+                commit=True,
+            )
+            raise ValueError("Falha na fonte publica configurada") from exc
+
     def _refresh_oauth_analysis_snapshot(self, session: dict[str, Any]) -> dict[str, Any]:
         if session.get("connection_mode") != "oauth":
             return session
@@ -1024,6 +1327,126 @@ class SocialOnboardingService:
             ),
             {
                 "job_type": SOCIAL_ONBOARDING_DIAGNOSE_JOB,
+                "limit": max(1, limit),
+            },
+        ).mappings().all()
+        self.db.commit()
+        return [dict(row) for row in rows]
+
+    def reconcile_stale_public_reference_syncs(
+        self,
+        *,
+        stale_after_minutes: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        candidates = self.db.execute(
+            text(
+                """
+                SELECT id
+                FROM social_public_reference_profiles
+                WHERE sync_status = 'syncing'
+                  AND updated_at < NOW() - make_interval(mins => :stale_after_minutes)
+                ORDER BY updated_at ASC, id ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT :limit
+                """
+            ),
+            {
+                "stale_after_minutes": max(1, stale_after_minutes),
+                "limit": max(1, limit),
+            },
+        ).mappings().all()
+        ids = [str(row["id"]) for row in candidates]
+        if not ids:
+            self.db.commit()
+            return []
+
+        next_sync_after = datetime.now(UTC) + timedelta(
+            hours=max(1, self.settings.apify_public_reference_failure_backoff_hours)
+        )
+        data_truth = {
+            "public_data_synced": False,
+            "last_sync_error_code": "sync_abandoned",
+            "last_sync_error_message": "Public reference sync claimed but did not finish",
+            "next_sync_after": next_sync_after.isoformat(),
+        }
+        rows = self.db.execute(
+            text(
+                """
+                UPDATE social_public_reference_profiles
+                SET sync_status = 'failed',
+                    failure_count = failure_count + 1,
+                    next_sync_after = :next_sync_after,
+                    data_truth = data_truth || CAST(:data_truth AS jsonb),
+                    updated_at = NOW()
+                WHERE id IN :ids
+                RETURNING *
+                """
+            ).bindparams(bindparam("ids", expanding=True)),
+            {
+                "ids": ids,
+                "next_sync_after": next_sync_after,
+                "data_truth": json.dumps(data_truth),
+            },
+        ).mappings().all()
+        self.db.execute(
+            text(
+                """
+                UPDATE social_reference_profiles
+                SET sync_status = 'failed',
+                    comparison_summary = CAST(:comparison_summary AS jsonb),
+                    updated_at = NOW()
+                WHERE public_reference_profile_id IN :ids
+                  AND status = 'active'
+                """
+            ).bindparams(bindparam("ids", expanding=True)),
+            {
+                "ids": ids,
+                "comparison_summary": json.dumps(
+                    {
+                        "status": "failed",
+                        "error_code": "sync_abandoned",
+                        "error_message": "Public reference sync did not finish",
+                        "next_sync_after": next_sync_after.isoformat(),
+                        "next_step": "Tentar novamente mais tarde",
+                    }
+                ),
+            },
+        )
+        self.db.commit()
+        return [dict(row) for row in rows]
+
+    def cleanup_orphaned_public_references(
+        self,
+        *,
+        retention_days: int,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                """
+                WITH candidates AS (
+                  SELECT p.id
+                  FROM social_public_reference_profiles p
+                  WHERE p.updated_at < NOW() - make_interval(days => :retention_days)
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM social_reference_profiles r
+                      WHERE r.public_reference_profile_id = p.id
+                        AND r.status = 'active'
+                    )
+                  ORDER BY p.updated_at ASC, p.id ASC
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT :limit
+                )
+                DELETE FROM social_public_reference_profiles p
+                USING candidates
+                WHERE p.id = candidates.id
+                RETURNING p.*
+                """
+            ),
+            {
+                "retention_days": max(1, retention_days),
                 "limit": max(1, limit),
             },
         ).mappings().all()
@@ -1271,6 +1694,155 @@ class SocialOnboardingService:
             commit=commit,
         )
 
+    def _enqueue_public_reference_sync_job(
+        self,
+        *,
+        tenant_id: str,
+        membership_id: str | None,
+        session_id: str | None,
+        public_reference_profile_id: str,
+        provider: str,
+        handle: str,
+        sync_generation: int,
+        commit: bool,
+    ) -> JobRecord:
+        return self.job_queue.enqueue_job(
+            tenant_id=tenant_id,
+            membership_id=membership_id,
+            job_type=SOCIAL_REFERENCE_SYNC_JOB,
+            queue_name=SOCIAL_ONBOARDING_QUEUE,
+            idempotency_key=(
+                f"social.references.sync:{provider}:{handle}:v{sync_generation}"
+            ),
+            payload={
+                "public_reference_profile_id": public_reference_profile_id,
+                "session_id": session_id,
+                "provider": provider,
+                "handle": handle,
+                "sync_generation": sync_generation,
+            },
+            max_attempts=1,
+            commit=commit,
+        )
+
+    def _enforce_public_reference_add_budget(self, *, tenant_id: str, provider: str) -> None:
+        self._enforce_public_reference_limit(
+            key=f"social-reference:add:{tenant_id}:{provider}",
+            limit=self.settings.apify_public_reference_add_limit_per_hour,
+            window_seconds=60 * 60,
+        )
+
+    def _enforce_public_reference_sync_budget(self, *, provider: str) -> None:
+        day = datetime.now(UTC).strftime("%Y%m%d")
+        self._enforce_public_reference_limit(
+            key=f"social-reference:sync:{provider}:{day}",
+            limit=self.settings.apify_public_reference_sync_limit_per_day,
+            window_seconds=60 * 60 * 24,
+        )
+
+    def _enforce_public_reference_limit(
+        self,
+        *,
+        key: str,
+        limit: int,
+        window_seconds: int,
+    ) -> None:
+        limiter = self._public_reference_rate_limiter()
+        if limiter is None:
+            return
+        try:
+            decision = limiter.check(
+                key=key,
+                limit=limit,
+                window_seconds=window_seconds,
+            )
+        except RateLimitUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Limitador de custo indisponivel",
+            ) from exc
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Limite de sincronizacao publica atingido",
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+
+    def _public_reference_rate_limiter(self) -> PublicRateLimiter | None:
+        if self.rate_limiter is not None:
+            return self.rate_limiter
+        if self.settings.public_rate_limit_backend == "redis":
+            self.rate_limiter = RedisFixedWindowRateLimiter()
+            return self.rate_limiter
+        logger.warning(
+            "public_reference_rate_limiter_disabled",
+            extra={"backend": self.settings.public_rate_limit_backend},
+        )
+        return None
+
+    def _enqueue_reference_diagnostic_if_possible(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        commit: bool,
+    ) -> JobRecord | None:
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET status = 'analyzing',
+                    progress_steps = CAST(:progress_steps AS jsonb),
+                    analysis_started_at = NOW(),
+                    analysis_completed_at = NULL,
+                    analysis_report = NULL,
+                    analysis_version = analysis_version + 1,
+                    error_code = NULL,
+                    error_message = NULL,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status NOT IN ('archived', 'connecting', 'analyzing')
+                  AND connected_account_id IS NOT NULL
+                  AND connected_account_handle IS NOT NULL
+                  AND (
+                    :debounce_seconds = 0
+                    OR analysis_completed_at IS NULL
+                    OR analysis_completed_at < NOW() - make_interval(secs => :debounce_seconds)
+                    OR COALESCE(
+                      (
+                        (analysis_report -> 'reference_context')
+                        ->> 'references_with_public_data'
+                      )::integer,
+                      0
+                    ) = 0
+                  )
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "progress_steps": json.dumps(_analysis_progress()),
+                "debounce_seconds": (
+                    self.settings.social_onboarding_reference_diagnostic_debounce_seconds
+                ),
+            },
+        ).mappings().first()
+        if row is None:
+            return None
+        return self._enqueue_diagnostic_job_for_ids(
+            tenant_id=tenant_id,
+            membership_id=(
+                str(row["updated_by_membership_id"])
+                if row.get("updated_by_membership_id")
+                else None
+            ),
+            session_id=session_id,
+            analysis_version=int(row["analysis_version"]),
+            commit=commit,
+        )
+
     def _get_or_create_phyllo_user(self, *, current: CurrentMembership) -> dict[str, Any]:
         environment = self.settings.phyllo_environment
         existing = self.db.execute(
@@ -1365,6 +1937,274 @@ class SocialOnboardingService:
         ).mappings().one()
         self.db.commit()
         return dict(row)
+
+    def _mark_public_reference_sync_result(
+        self,
+        *,
+        public_reference_profile_id: str,
+        status: str,
+        error_code: str | None,
+        error_message: str | None,
+        commit: bool,
+    ) -> None:
+        increment_failure = status in {"failed", "unavailable", "partially_synced"}
+        next_sync_after = datetime.now(UTC) + timedelta(
+            hours=max(1, self.settings.apify_public_reference_failure_backoff_hours)
+        )
+        summary = {
+            "status": status,
+            "error_code": error_code,
+            "error_message": error_message,
+            "next_sync_after": next_sync_after.isoformat(),
+            "next_step": (
+                "Tentar novamente mais tarde"
+                if status == "failed"
+                else "Adicionar outra referencia ou revisar o handle informado"
+            ),
+        }
+        self.db.execute(
+            text(
+                """
+                UPDATE social_public_reference_profiles
+                SET sync_status = :status,
+                    failure_count = CASE
+                      WHEN :increment_failure THEN failure_count + 1
+                      ELSE failure_count
+                    END,
+                    next_sync_after = :next_sync_after,
+                    data_truth = data_truth || CAST(:data_truth AS jsonb),
+                    updated_at = NOW()
+                WHERE id = :public_reference_profile_id
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "status": status,
+                "increment_failure": increment_failure,
+                "next_sync_after": next_sync_after,
+                "data_truth": json.dumps(
+                    {
+                        "public_data_synced": False,
+                        "last_sync_error_code": error_code,
+                        "last_sync_error_message": error_message,
+                        "next_sync_after": next_sync_after.isoformat(),
+                    }
+                ),
+            },
+        )
+        self.db.execute(
+            text(
+                """
+                UPDATE social_reference_profiles
+                SET sync_status = :status,
+                    comparison_summary = CAST(:comparison_summary AS jsonb),
+                    updated_at = NOW()
+                WHERE public_reference_profile_id = :public_reference_profile_id
+                  AND status = 'active'
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "status": status,
+                "comparison_summary": json.dumps(summary),
+            },
+        )
+        if commit:
+            self.db.commit()
+
+    def _persist_public_reference_sync(
+        self,
+        *,
+        public_reference_profile_id: str,
+        provider: str,
+        profile: dict[str, Any],
+        profile_raw: dict[str, Any],
+        posts: list[dict[str, Any]],
+        sync_status: str,
+        next_sync_after: datetime,
+        posts_error: str | None,
+    ) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE social_public_reference_profiles
+                SET display_name = :display_name,
+                    profile_url = :profile_url,
+                    source = 'apify',
+                    sync_status = :sync_status,
+                    failure_count = CASE
+                      WHEN :sync_status = 'synced' THEN 0
+                      ELSE failure_count + 1
+                    END,
+                    profile_snapshot = CAST(:profile_snapshot AS jsonb),
+                    raw_payload = CAST(:raw_payload AS jsonb),
+                    data_truth = CAST(:data_truth AS jsonb),
+                    last_synced_at = NOW(),
+                    next_sync_after = :next_sync_after,
+                    observed_at = NOW(),
+                    updated_at = NOW()
+                WHERE id = :public_reference_profile_id
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "display_name": profile.get("display_name"),
+                "profile_url": profile.get("profile_url"),
+                "sync_status": sync_status,
+                "profile_snapshot": json.dumps(profile),
+                "raw_payload": json.dumps(_minimize_apify_profile_raw(profile_raw)),
+                "data_truth": json.dumps(
+                    {
+                        "source": "apify",
+                        "source_detail": "apify.instagram-profile-scraper",
+                        "confidence": "high",
+                        "is_inferred": False,
+                        "public_data_synced": True,
+                        "public_data_only": True,
+                        "raw_payload_persisted": True,
+                        "posts_sync_error": posts_error,
+                    }
+                ),
+                "next_sync_after": next_sync_after,
+            },
+        )
+        rows = []
+        for post in posts:
+            raw_post = post.pop("_raw", {})
+            minimized_raw_post = _minimize_apify_post_raw(raw_post)
+            rows.append(
+                {
+                    "reference_profile_id": public_reference_profile_id,
+                    "provider": provider,
+                    "external_id": post["external_id"],
+                    "content_type": post.get("type") or "UNKNOWN",
+                    "content_format": post.get("format") or "UNKNOWN",
+                    "title": post.get("title"),
+                    "content_url": post.get("url"),
+                    "published_at": _parse_datetime(post.get("published_at")),
+                    "metrics_json": json.dumps(post.get("metrics") or {}),
+                    "raw_payload": json.dumps(minimized_raw_post),
+                    "data_truth": json.dumps(
+                        {
+                            "source": "apify",
+                            "source_detail": "apify.instagram-post-scraper",
+                            "confidence": (
+                                "medium"
+                                if post.get("unavailable_metrics")
+                                else "high"
+                            ),
+                            "is_inferred": False,
+                            "public_data_only": True,
+                            "raw_payload_persisted": True,
+                            "unavailable_metrics": post.get("unavailable_metrics") or [],
+                        }
+                    ),
+                    "engagement_rate_by_followers": post.get("engagement_rate_by_followers"),
+                    "engagement_rate_by_reach": post.get("engagement_rate_by_reach"),
+                    "performance_score": post.get("performance_score"),
+                }
+            )
+        if rows:
+            self.db.execute(
+                text(
+                    """
+                    INSERT INTO social_public_reference_contents (
+                      reference_profile_id,
+                      provider,
+                      external_id,
+                      content_type,
+                      content_format,
+                      title,
+                      content_url,
+                      published_at,
+                      metrics_json,
+                      raw_payload,
+                      data_truth,
+                      engagement_rate_by_followers,
+                      engagement_rate_by_reach,
+                      performance_score,
+                      observed_at,
+                      updated_at
+                    )
+                    VALUES (
+                      :reference_profile_id,
+                      :provider,
+                      :external_id,
+                      :content_type,
+                      :content_format,
+                      :title,
+                      :content_url,
+                      :published_at,
+                      CAST(:metrics_json AS jsonb),
+                      CAST(:raw_payload AS jsonb),
+                      CAST(:data_truth AS jsonb),
+                      :engagement_rate_by_followers,
+                      :engagement_rate_by_reach,
+                      :performance_score,
+                      NOW(),
+                      NOW()
+                    )
+                    ON CONFLICT (reference_profile_id, external_id)
+                    DO UPDATE SET
+                      provider = EXCLUDED.provider,
+                      content_type = EXCLUDED.content_type,
+                      content_format = EXCLUDED.content_format,
+                      title = EXCLUDED.title,
+                      content_url = EXCLUDED.content_url,
+                      published_at = EXCLUDED.published_at,
+                      metrics_json = EXCLUDED.metrics_json,
+                      raw_payload = EXCLUDED.raw_payload,
+                      data_truth = EXCLUDED.data_truth,
+                      engagement_rate_by_followers = EXCLUDED.engagement_rate_by_followers,
+                      engagement_rate_by_reach = EXCLUDED.engagement_rate_by_reach,
+                      performance_score = EXCLUDED.performance_score,
+                      observed_at = NOW(),
+                      updated_at = NOW()
+                    """
+                ),
+                rows,
+            )
+        comparison_summary = {
+            "status": sync_status,
+            "source": "apify",
+            "public_contents_count": len(rows),
+            "public_followers_count": int(profile.get("followers_count") or 0),
+            "public_posts_count": int(profile.get("posts_count") or 0),
+            "next_sync_after": next_sync_after.isoformat(),
+            "next_step": (
+                "Comparativo publico pronto para o proximo diagnostico"
+                if rows
+                else "Perfil lido; faltam posts publicos para comparar performance"
+            ),
+        }
+        self.db.execute(
+            text(
+                """
+                UPDATE social_reference_profiles
+                SET sync_status = :sync_status,
+                    last_synced_at = NOW(),
+                    metadata_json = (
+                      COALESCE(metadata_json, '{}'::jsonb)
+                      || CAST(:metadata_json AS jsonb)
+                    ),
+                    comparison_summary = CAST(:comparison_summary AS jsonb),
+                    updated_at = NOW()
+                WHERE public_reference_profile_id = :public_reference_profile_id
+                  AND status = 'active'
+                """
+            ),
+            {
+                "public_reference_profile_id": public_reference_profile_id,
+                "sync_status": sync_status,
+                "metadata_json": json.dumps(
+                    {
+                        "public_data_synced": bool(rows),
+                        "public_reference_source": "apify",
+                    }
+                ),
+                "comparison_summary": json.dumps(comparison_summary),
+            },
+        )
 
     def _persist_connected_contents(
         self,
@@ -1698,6 +2538,18 @@ def _pick_number(
     return 0.0 if as_float else 0
 
 
+def _pick_number_top_level(payload: dict[str, Any], *, keys: tuple[str, ...]) -> int | None:
+    for key in keys:
+        value = payload.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            return int(float(str(value).replace("%", "").strip()))
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _find_value(value: Any, keys: tuple[str, ...]) -> Any:
     if isinstance(value, dict):
         for key in keys:
@@ -1991,8 +2843,206 @@ def _manual_reference_truth() -> dict[str, Any]:
         "public_data_synced": False,
         "rule": (
             "Handle informado pelo usuario. Nao usar metricas, audiencia ou conteudos "
-            "da referencia ate a sincronizacao publica oficial."
+            "da referencia ate a sincronizacao publica por fonte configurada."
         ),
+    }
+
+
+def _public_reference_needs_sync(
+    reference: dict[str, Any],
+    *,
+    circuit_breaker_failures: int,
+) -> bool:
+    status = str(reference.get("sync_status") or "manual_pending")
+    if status == "manual_pending":
+        return True
+    if status in {"pending", "syncing"}:
+        return False
+    failure_count = int(reference.get("failure_count") or 0)
+    if status in {"failed", "unavailable", "partially_synced"}:
+        if failure_count >= max(1, circuit_breaker_failures):
+            return False
+    next_sync_after = reference.get("next_sync_after")
+    if next_sync_after is None:
+        return True
+    if isinstance(next_sync_after, datetime):
+        now = datetime.now(tz=next_sync_after.tzinfo)
+        return next_sync_after <= now
+    return False
+
+
+def _public_reference_job_can_attempt(
+    reference: dict[str, Any],
+    *,
+    circuit_breaker_failures: int,
+) -> bool:
+    if str(reference.get("sync_status") or "") == "pending":
+        return True
+    return _public_reference_needs_sync(
+        reference,
+        circuit_breaker_failures=circuit_breaker_failures,
+    )
+
+
+def _normalize_apify_instagram_profile(
+    payload: dict[str, Any],
+    *,
+    fallback_handle: str,
+) -> dict[str, Any]:
+    handle = (
+        _pick_text(payload, keys=("username", "userName", "handle", "ownerUsername"))
+        or fallback_handle
+    )
+    handle = _normalize_handle(handle)
+    profile_url = (
+        _pick_text(payload, keys=("url", "profileUrl", "profile_url"))
+        or f"https://www.instagram.com/{handle}/"
+    )
+    return {
+        "provider": "instagram",
+        "handle": handle,
+        "display_name": _pick_text(payload, keys=("fullName", "displayName", "name"))
+        or handle,
+        "profile_url": profile_url,
+        "profile_image_url": _pick_text(
+            payload,
+            keys=("profilePicUrl", "profile_pic_url", "profileImageUrl", "profile_image_url"),
+        ),
+        "bio": _pick_text(payload, keys=("biography", "bio", "description")),
+        "website": _pick_text(payload, keys=("externalUrl", "website", "websiteUrl")),
+        "followers_count": _pick_number(
+            payload,
+            keys=("followersCount", "followers_count", "followerCount", "followers"),
+        ),
+        "following_count": _pick_number(
+            payload,
+            keys=("followsCount", "followingCount", "following_count", "follows"),
+        ),
+        "posts_count": _pick_number(payload, keys=("postsCount", "mediaCount", "posts_count")),
+        "is_business": _pick_bool(
+            payload,
+            keys=("isBusinessAccount", "businessAccount", "is_business"),
+        ),
+        "is_verified": _pick_bool(payload, keys=("verified", "isVerified", "is_verified")),
+        "is_private": _pick_bool(payload, keys=("private", "isPrivate", "is_private")),
+        "source": "apify",
+        "connection_mode": "public_reference",
+        "public_data_only": True,
+    }
+
+
+def _minimize_apify_profile_raw(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload.get(key)
+        for key in (
+            "username",
+            "fullName",
+            "url",
+            "profilePicUrl",
+            "followersCount",
+            "followsCount",
+            "postsCount",
+            "biography",
+            "externalUrl",
+            "private",
+            "verified",
+            "isBusinessAccount",
+        )
+        if key in payload
+    }
+
+
+def _minimize_apify_post_raw(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: payload.get(key)
+        for key in (
+            "id",
+            "shortCode",
+            "url",
+            "caption",
+            "timestamp",
+            "productType",
+            "likesCount",
+            "commentsCount",
+            "videoViewCount",
+            "videoPlayCount",
+            "viewsCount",
+            "isPinned",
+            "isCommentsDisabled",
+        )
+        if key in payload
+    }
+
+
+def _normalize_apify_instagram_post(
+    payload: dict[str, Any],
+    *,
+    followers_count: int,
+) -> dict[str, Any]:
+    shortcode = _pick_text(payload, keys=("shortCode", "shortcode", "code"))
+    url = _pick_text(payload, keys=("url", "postUrl", "displayUrl"))
+    external_id = (
+        _pick_text(payload, keys=("id", "external_id", "externalId"))
+        or shortcode
+        or url
+        or ""
+    )
+    product_type = (
+        _pick_text(payload, keys=("productType", "type", "mediaType")) or "UNKNOWN"
+    ).upper()
+    if product_type in {"CLIPS", "REELS"}:
+        content_type = "REELS"
+        content_format = "VIDEO"
+    elif "VIDEO" in product_type:
+        content_type = "VIDEO"
+        content_format = "VIDEO"
+    elif "CAROUSEL" in product_type or "SIDE" in product_type:
+        content_type = "CAROUSEL"
+        content_format = "CAROUSEL"
+    else:
+        content_type = "POST"
+        content_format = "IMAGE"
+
+    likes = _pick_number_top_level(payload, keys=("likesCount", "likeCount", "likes"))
+    comments = _pick_number_top_level(payload, keys=("commentsCount", "commentCount", "comments"))
+    views = _pick_number_top_level(
+        payload,
+        keys=("videoViewCount", "videoPlayCount", "viewsCount", "views", "playsCount"),
+    )
+    metrics = {
+        "likes": likes,
+        "comments": comments,
+        "views": views,
+        "shares": None,
+        "saves": None,
+        "reach": None,
+        "impressions": None,
+    }
+    unavailable_metrics = [
+        key
+        for key, value in metrics.items()
+        if value is None
+    ]
+    interaction_count = (likes or 0) + (comments or 0)
+    performance_score = (likes or 0) + (comments or 0) * 4 + (views or 0) * 0.02
+    if not url and shortcode:
+        url = f"https://www.instagram.com/p/{shortcode}/"
+    return {
+        "id": str(payload.get("id") or ""),
+        "external_id": str(external_id),
+        "type": content_type,
+        "format": content_format,
+        "url": url,
+        "published_at": _pick_text(payload, keys=("timestamp", "publishedAt", "takenAt")),
+        "title": _pick_text(payload, keys=("caption", "text", "title")),
+        "metrics": metrics,
+        "engagement_rate_by_followers": round((interaction_count / followers_count) * 100, 2)
+        if followers_count
+        else 0.0,
+        "engagement_rate_by_reach": None,
+        "performance_score": round(performance_score, 2),
+        "unavailable_metrics": unavailable_metrics,
+        "_raw": payload,
     }
 
 
@@ -2035,9 +3085,9 @@ def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]
         status = "manual_only"
         insight = (
             "Referencias informadas; comparativo real aguarda sincronizacao publica "
-            "oficial."
+            "pela infraestrutura da Labby."
         )
-        next_step = "sincronizar dados publicos das referencias antes de comparar performance"
+        next_step = "aguardar a sincronizacao dos dados publicos antes de comparar performance"
     elif references_with_public_data < min(3, declared_count):
         status = "partially_synced"
         insight = "Benchmark parcialmente pronto; faltam dados publicos de algumas referencias."
@@ -2058,7 +3108,7 @@ def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]
         "next_step": next_step,
         "truth_rule": (
             "Referencias manuais calibram contexto. Comparativos de performance so podem "
-            "usar dados publicos sincronizados por fonte oficial."
+            "usar dados publicos sincronizados por fonte configurada e auditavel."
         ),
     }
 
@@ -2445,10 +3495,10 @@ def _build_truth_sections(
                 key="reference_profiles",
                 label="Perfis publicos de referencia",
                 reason=(
-                    "O cliente ainda nao informou referencias e a busca publica "
-                    "ainda nao foi integrada."
+                    "O cliente ainda nao informou referencias publicas para calibrar "
+                    "comparativo externo."
                 ),
-                next_step="Adicionar 3 a 5 referencias do mesmo segmento no proximo corte.",
+                next_step="Adicionar 3 a 5 referencias do mesmo segmento.",
             )
         )
     elif not reference_context["references_with_public_data"]:

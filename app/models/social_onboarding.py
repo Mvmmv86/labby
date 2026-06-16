@@ -113,7 +113,8 @@ class SocialReferenceProfile(Base):
         ),
         CheckConstraint(
             "sync_status IN ("
-            "'manual_pending', 'pending', 'syncing', 'synced', 'unavailable', 'failed'"
+            "'manual_pending', 'pending', 'syncing', 'partially_synced', "
+            "'synced', 'unavailable', 'failed'"
             ")",
             name="ck_social_reference_profiles_sync_status",
         ),
@@ -171,12 +172,13 @@ class SocialPublicReferenceProfile(Base):
             name="ck_social_public_refs_provider",
         ),
         CheckConstraint(
-            "source IN ('manual', 'phyllo', 'meta_business_discovery', 'unknown')",
+            "source IN ('manual', 'phyllo', 'apify', 'meta_business_discovery', 'unknown')",
             name="ck_social_public_refs_source",
         ),
         CheckConstraint(
             "sync_status IN ("
-            "'manual_pending', 'pending', 'syncing', 'synced', 'unavailable', 'failed'"
+            "'manual_pending', 'pending', 'syncing', 'partially_synced', "
+            "'synced', 'unavailable', 'failed'"
             ")",
             name="ck_social_public_refs_sync_status",
         ),
@@ -192,6 +194,8 @@ class SocialPublicReferenceProfile(Base):
     profile_url: Mapped[str | None] = mapped_column(Text)
     source: Mapped[str] = mapped_column(String(60), nullable=False, default="manual")
     sync_status: Mapped[str] = mapped_column(String(40), nullable=False, default="manual_pending")
+    sync_generation: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
+    failure_count: Mapped[int] = mapped_column(nullable=False, default=0, server_default="0")
     profile_snapshot: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )

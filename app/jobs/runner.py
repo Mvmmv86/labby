@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from app.core.celery_app import celery_app
@@ -17,6 +18,8 @@ from app.domains.sales import webhook_jobs as _webhook_jobs  # noqa: F401
 from app.domains.social_media import news_jobs as _news_jobs  # noqa: F401
 from app.domains.social_media import onboarding_jobs as _onboarding_jobs  # noqa: F401
 from app.domains.social_media.onboarding_service import SocialOnboardingService
+
+logger = logging.getLogger(__name__)
 
 
 def process_due_jobs(
@@ -150,13 +153,56 @@ def reconcile_abandoned_social_onboarding_analyses() -> dict[str, int]:
     settings = get_settings()
     with SessionLocal() as db:
         service = SocialOnboardingService(db, job_queue=JobQueueService(db))
-        phyllo_rows = service.reconcile_phyllo_connecting_sessions(
-            limit=settings.social_onboarding_reconciler_batch_size,
-        )
-        abandoned_rows = service.reconcile_abandoned_analyses(
-            limit=settings.social_onboarding_reconciler_batch_size,
-        )
-    return {"phyllo_reconciled": len(phyllo_rows), "failed": len(abandoned_rows)}
+        public_reference_rows: list[dict[str, Any]] = []
+        orphaned_public_reference_rows: list[dict[str, Any]] = []
+        phyllo_rows: list[dict[str, Any]] = []
+        abandoned_rows: list[dict[str, Any]] = []
+        errors = 0
+
+        try:
+            public_reference_rows = service.reconcile_stale_public_reference_syncs(
+                stale_after_minutes=settings.apify_public_reference_syncing_timeout_minutes,
+                limit=settings.apify_public_reference_reaper_batch_size,
+            )
+        except Exception:
+            errors += 1
+            db.rollback()
+            logger.warning("social_onboarding_public_reference_reaper_failed", exc_info=True)
+
+        try:
+            orphaned_public_reference_rows = service.cleanup_orphaned_public_references(
+                retention_days=settings.social_public_reference_orphan_retention_days,
+                limit=settings.social_public_reference_cleanup_batch_size,
+            )
+        except Exception:
+            errors += 1
+            db.rollback()
+            logger.warning("social_onboarding_public_reference_cleanup_failed", exc_info=True)
+
+        try:
+            phyllo_rows = service.reconcile_phyllo_connecting_sessions(
+                limit=settings.social_onboarding_reconciler_batch_size,
+            )
+        except Exception:
+            errors += 1
+            db.rollback()
+            logger.warning("social_onboarding_phyllo_reconciler_failed", exc_info=True)
+
+        try:
+            abandoned_rows = service.reconcile_abandoned_analyses(
+                limit=settings.social_onboarding_reconciler_batch_size,
+            )
+        except Exception:
+            errors += 1
+            db.rollback()
+            logger.warning("social_onboarding_analysis_reconciler_failed", exc_info=True)
+    return {
+        "public_reference_failed": len(public_reference_rows),
+        "public_reference_orphans_deleted": len(orphaned_public_reference_rows),
+        "phyllo_reconciled": len(phyllo_rows),
+        "failed": len(abandoned_rows),
+        "errors": errors,
+    }
 
 
 def _execution_context(job: JobRecord) -> JobExecutionContext:

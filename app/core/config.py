@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     social_news_rank_limit: int = 5
     social_onboarding_reconciler_batch_size: int = 100
     social_onboarding_reconciler_interval_seconds: int = 300
+    social_onboarding_max_public_references_per_session: int = Field(default=3, ge=1)
+    social_onboarding_reference_diagnostic_debounce_seconds: int = Field(
+        default=300, ge=0
+    )
+    social_public_reference_orphan_retention_days: int = Field(default=90, ge=1)
+    social_public_reference_cleanup_batch_size: int = Field(default=500, ge=1)
     phyllo_api_base_url: str = "https://api.staging.getphyllo.com"
     phyllo_environment: Literal["sandbox", "staging", "production"] = "staging"
     phyllo_client_id: str | None = None
@@ -72,6 +78,20 @@ class Settings(BaseSettings):
     phyllo_connect_display_name: str = "Labby"
     phyllo_products: str = "IDENTITY,ENGAGEMENT"
     phyllo_instagram_work_platform_id: str = "9bb8913b-ddd9-430b-a66a-d74d846e6c66"
+    apify_api_base_url: str = "https://api.apify.com/v2"
+    apify_api_token: str | None = None
+    apify_timeout_seconds: float = 180.0
+    apify_instagram_profile_actor_id: str = "apify/instagram-profile-scraper"
+    apify_instagram_post_actor_id: str = "apify/instagram-post-scraper"
+    apify_instagram_max_posts_per_profile: int = 30
+    apify_public_reference_ttl_days: int = Field(default=7, ge=1)
+    apify_public_reference_failure_backoff_hours: int = Field(default=24, ge=1)
+    apify_public_reference_circuit_breaker_failures: int = Field(default=3, ge=1)
+    apify_public_reference_syncing_timeout_minutes: int = Field(default=60, ge=1)
+    apify_public_reference_reaper_batch_size: int = Field(default=100, ge=1)
+    apify_public_reference_add_limit_per_hour: int = Field(default=30, ge=1)
+    apify_public_reference_sync_limit_per_day: int = Field(default=300, ge=1)
+    apify_max_total_charge_usd: float = Field(default=0.50, gt=0)
     allowed_origins: str = (
         "http://localhost:3000,http://localhost:3001,https://app.labby.com.br"
     )
