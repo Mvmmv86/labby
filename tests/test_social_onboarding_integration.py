@@ -1480,6 +1480,10 @@ def test_social_onboarding_public_reference_diagnostic_debounce(
     still_ready = service.get_session(current=current_one(), session_id=str(session["id"]))
     assert still_ready["status"] == "ready"
     assert still_ready["analysis_version"] == 2
+    assert still_ready["analysis_report"]["reference_context"][
+        "references_with_public_data"
+    ] == 1
+    assert len(still_ready["analysis_report"]["competitive_benchmark"]["reference_profiles"]) == 1
     diagnosis_jobs = db_session.execute(
         text(
             """
@@ -1492,6 +1496,18 @@ def test_social_onboarding_public_reference_diagnostic_debounce(
         {"session_id": str(session["id"])},
     ).scalar_one()
     assert diagnosis_jobs == 2
+
+    queued, specialist_job = service.enqueue_specialist_analysis(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+
+    assert specialist_job.job_type == "social.onboarding.specialist_analysis"
+    assert queued["analysis_version"] == 3
+    assert queued["analysis_report"]["reference_context"]["references_with_public_data"] == 2
+    assert queued["analysis_report"]["reference_context"]["public_contents_total"] == 4
+    assert len(queued["analysis_report"]["competitive_benchmark"]["reference_profiles"]) == 2
+    assert queued["analysis_report"]["specialist_analysis"]["analysis_version"] == 3
 
 
 def test_social_onboarding_report_marks_manual_references_as_unsynced(

@@ -1006,6 +1006,7 @@ class SocialOnboardingService:
         if row["status"] != "ready":
             raise HTTPException(status_code=409, detail="Diagnostico ainda nao esta pronto")
 
+        row = self._refresh_ready_report_if_benchmark_stale(row=dict(row))
         report = dict(row["analysis_report"] or {})
         brief_value = report.get("specialist_brief")
         brief = brief_value if isinstance(brief_value, dict) else {}
@@ -1089,6 +1090,50 @@ class SocialOnboardingService:
             raise HTTPException(status_code=409, detail="Diagnostico mudou durante a solicitacao")
         self.db.commit()
         return self._with_references(dict(row)), job
+
+    def _refresh_ready_report_if_benchmark_stale(self, *, row: dict[str, Any]) -> dict[str, Any]:
+        current_report = dict(row.get("analysis_report") or {})
+        references = self._list_references(
+            tenant_id=str(row["tenant_id"]),
+            session_id=str(row["id"]),
+        )
+        rebuilt_report = _build_report(row, references)
+        if not _analysis_report_needs_benchmark_refresh(
+            current_report=current_report,
+            rebuilt_report=rebuilt_report,
+        ):
+            return row
+
+        next_analysis_version = int(row["analysis_version"] or 0) + 1
+        updated = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET analysis_version = :analysis_version,
+                    analysis_report = CAST(:analysis_report AS jsonb),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :current_analysis_version
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(row["tenant_id"]),
+                "session_id": str(row["id"]),
+                "analysis_version": next_analysis_version,
+                "current_analysis_version": int(row["analysis_version"] or 0),
+                "analysis_report": json.dumps(rebuilt_report),
+            },
+        ).mappings().first()
+        if updated is None:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Diagnostico mudou durante a solicitacao",
+            )
+        return dict(updated)
 
     def run_diagnostic(
         self,
@@ -4243,6 +4288,58 @@ def _build_specialist_analysis_input(
             "Separar fatos, calculos e inferencias.",
         ],
     }
+
+
+def _analysis_report_needs_benchmark_refresh(
+    *,
+    current_report: dict[str, Any],
+    rebuilt_report: dict[str, Any],
+) -> bool:
+    if not current_report:
+        return bool(rebuilt_report)
+
+    current_context = _dict_value(current_report.get("reference_context"))
+    rebuilt_context = _dict_value(rebuilt_report.get("reference_context"))
+    if _int_value(rebuilt_context.get("references_with_public_data")) > _int_value(
+        current_context.get("references_with_public_data")
+    ):
+        return True
+    if _int_value(rebuilt_context.get("public_contents_total")) > _int_value(
+        current_context.get("public_contents_total")
+    ):
+        return True
+
+    current_benchmark = _dict_value(current_report.get("competitive_benchmark"))
+    rebuilt_benchmark = _dict_value(rebuilt_report.get("competitive_benchmark"))
+    current_references = _list_value(current_benchmark.get("reference_profiles"))
+    rebuilt_references = _list_value(rebuilt_benchmark.get("reference_profiles"))
+    if len(rebuilt_references) > len(current_references):
+        return True
+
+    current_handles = {
+        str(item.get("handle") or "").strip().lower()
+        for item in current_references
+        if isinstance(item, dict)
+    }
+    rebuilt_handles = {
+        str(item.get("handle") or "").strip().lower()
+        for item in rebuilt_references
+        if isinstance(item, dict)
+    }
+    if rebuilt_handles and rebuilt_handles != current_handles:
+        return True
+
+    current_connected = _dict_value(current_benchmark.get("connected_profile"))
+    rebuilt_connected = _dict_value(rebuilt_benchmark.get("connected_profile"))
+    if _int_value(rebuilt_connected.get("followers_count")) > _int_value(
+        current_connected.get("followers_count")
+    ):
+        return True
+    if _int_value(rebuilt_connected.get("contents_analyzed")) > _int_value(
+        current_connected.get("contents_analyzed")
+    ):
+        return True
+    return False
 
 
 def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> dict[str, Any]:
