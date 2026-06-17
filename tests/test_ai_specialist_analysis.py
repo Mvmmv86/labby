@@ -1,6 +1,7 @@
 from app.integrations.ai import (
     SOCIAL_SPECIALIST_ANALYSIS_VERSION,
     FallbackAISpecialistAnalysisClient,
+    _normalize_specialist_analysis,
     _specialist_instructions,
     _specialist_prompt,
 )
@@ -117,3 +118,92 @@ def test_fallback_specialist_analysis_uses_competitive_benchmark_evidence() -> N
         insight["title"] == "@evandro_pit"
         for insight in analysis["benchmark_insights"]
     )
+
+
+def test_openai_specialist_analysis_output_is_normalized_to_contract() -> None:
+    analysis_input = {
+        "report": {
+            "segment": {"name": "Cripto, Web3 e ativos digitais"},
+            "content_metrics": {"best_format": "VIDEO"},
+            "top_contents": [
+                {
+                    "format": "VIDEO",
+                    "title": "Post real com sinal",
+                    "metrics": {"likes": 50, "comments": 4},
+                }
+            ],
+            "competitive_benchmark": {
+                "method": "Comparacao normalizada.",
+                "connected_profile": {
+                    "handle": "gvcripto",
+                    "display_name": "Gabriel Vieira | Cripto",
+                    "followers_count": 1364,
+                    "posts_count": 31,
+                    "contents_analyzed": 25,
+                    "best_format": "VIDEO",
+                    "avg_interactions_per_content": 42.5,
+                    "engagement_rate_by_followers": 0.29,
+                },
+                "aggregate": {
+                    "references_with_data": 2,
+                    "public_contents_total": 60,
+                    "reference_avg_interactions_per_content": 420.0,
+                    "dominant_reference_format": "VIDEO",
+                },
+                "reference_profiles": [
+                    {
+                        "handle": "evandro_pit",
+                        "display_name": "Evandro Filho",
+                        "followers_count": 218575,
+                        "posts_count": 1243,
+                        "public_contents_count": 30,
+                        "top_format": "VIDEO",
+                        "avg_interactions_per_content": 92.07,
+                        "avg_er_by_followers": 0.04,
+                    }
+                ],
+            },
+        }
+    }
+    malformed_openai_output = {
+        "executive_summary": {
+            "perfil": "Gabriel Vieira | Cripto",
+            "segmento": "Cripto",
+            "posts": 31,
+        },
+        "diagnosis": {
+            "forcas": ["Bom engajamento"],
+            "limitacoes": ["Sem demografia"],
+        },
+        "benchmark_insights": {
+            "benchmark_valores": [
+                {"perfil": "evandro_pit", "taxa_engajamento": 0.25}
+            ]
+        },
+        "content_patterns": [{"tipo": "VIDEO", "metricas": {"likes": 50}}],
+        "action_plan": [
+            "Validar a promessa da bio",
+            "Separar melhores posts",
+        ],
+        "comparison_matrix": [{"metrica": "seguidores", "perfil": 1364}],
+    }
+
+    normalized = _normalize_specialist_analysis(
+        malformed_openai_output,
+        analysis_input=analysis_input,
+        provider="openai",
+        model="gpt-test",
+    )
+
+    assert normalized["version"] == SOCIAL_SPECIALIST_ANALYSIS_VERSION
+    assert normalized["provider"] == "openai"
+    assert normalized["model"] == "gpt-test"
+    assert isinstance(normalized["executive_summary"], str)
+    assert isinstance(normalized["diagnosis"], list)
+    assert normalized["diagnosis"][0]["title"] == "Forcas"
+    assert isinstance(normalized["benchmark_insights"], list)
+    assert normalized["benchmark_insights"][0]["title"] == "evandro_pit"
+    assert normalized["action_plan"][0]["day"] == "Passo 1"
+    assert normalized["action_plan"][0]["action"] == "Validar a promessa da bio"
+    assert normalized["comparison_matrix"][0]["kind"] == "perfil_conectado"
+    assert normalized["comparison_matrix"][0]["handle"] == "gvcripto"

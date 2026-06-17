@@ -7,7 +7,7 @@ import httpx
 
 from app.core.config import Settings
 
-SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v2"
+SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v3"
 
 
 class AIRewriteError(Exception):
@@ -522,14 +522,16 @@ class OpenAIResponsesRewriteClient:
         content = _extract_response_text(data).strip()
         if not content:
             raise AITemporaryError("Provider IA retornou resposta vazia")
-        analysis = _extract_json_object(content)
-        if not analysis:
+        raw_analysis = _extract_json_object(content)
+        if not raw_analysis:
             raise AITemporaryError("Provider IA nao retornou JSON valido")
-        analysis.setdefault("status", "ready")
-        analysis.setdefault("version", SOCIAL_SPECIALIST_ANALYSIS_VERSION)
-        analysis.setdefault("provider", "openai")
-        analysis.setdefault("model", str(data.get("model") or self.model))
-        analysis.setdefault("generated_at", datetime.now(UTC).isoformat())
+        model = str(data.get("model") or self.model)
+        analysis = _normalize_specialist_analysis(
+            raw_analysis,
+            analysis_input=analysis_input,
+            provider="openai",
+            model=model,
+        )
 
         usage = data.get("usage") or {}
         input_tokens = _int_or_none(usage.get("input_tokens"))
@@ -650,10 +652,271 @@ def _specialist_prompt(analysis_input: dict[str, Any]) -> str:
         "Retorne JSON com as chaves: status, version, executive_summary, "
         "comparison_matrix, evidence_highlights, diagnosis, content_patterns, "
         "benchmark_insights, opportunities, action_plan, truth_blocks, source_contract. "
+        "executive_summary deve ser string. diagnosis, content_patterns, "
+        "benchmark_insights, opportunities, action_plan, truth_blocks, comparison_matrix "
+        "e evidence_highlights devem ser arrays de objetos, nunca objeto solto. "
+        "action_plan deve usar objetos com day, action, expected_signal e evidence. "
         "A comparison_matrix deve comparar perfil conectado e referencias publicas com "
         "metricas normalizadas quando existirem. Cada recomendacao deve citar evidence "
         "e confidence. Use listas densas, especificas e acionaveis."
     )
+
+
+def _normalize_specialist_analysis(
+    analysis: dict[str, Any],
+    *,
+    analysis_input: dict[str, Any],
+    provider: str = "openai",
+    model: str = "unknown",
+) -> dict[str, Any]:
+    fallback = FallbackAISpecialistAnalysisClient().generate_social_profile_analysis(
+        analysis_input=analysis_input
+    ).analysis
+    normalized = dict(fallback)
+    normalized.update(
+        {
+            "status": "ready",
+            "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
+            "provider": provider,
+            "model": model,
+            "generated_at": _text_value(
+                analysis.get("generated_at"),
+                fallback=str(datetime.now(UTC).isoformat()),
+            ),
+        }
+    )
+
+    normalized["executive_summary"] = _summary_value(
+        analysis.get("executive_summary"),
+        fallback=str(fallback.get("executive_summary") or ""),
+    )
+    normalized["diagnosis"] = _normalize_diagnosis_items(
+        analysis.get("diagnosis"),
+        fallback=fallback.get("diagnosis") or [],
+    )
+    normalized["content_patterns"] = _normalize_content_pattern_items(
+        analysis.get("content_patterns"),
+        fallback=fallback.get("content_patterns") or [],
+    )
+    normalized["benchmark_insights"] = _normalize_insight_items(
+        analysis.get("benchmark_insights"),
+        fallback=fallback.get("benchmark_insights") or [],
+    )
+    normalized["opportunities"] = _normalize_opportunity_items(
+        analysis.get("opportunities"),
+        fallback=fallback.get("opportunities") or [],
+    )
+    normalized["action_plan"] = _normalize_action_plan_items(
+        analysis.get("action_plan"),
+        fallback=fallback.get("action_plan") or [],
+    )
+    normalized["truth_blocks"] = _normalize_truth_block_items(
+        analysis.get("truth_blocks"),
+        fallback=fallback.get("truth_blocks") or [],
+    )
+
+    comparison_matrix = analysis.get("comparison_matrix")
+    if _is_canonical_comparison_matrix(comparison_matrix):
+        normalized["comparison_matrix"] = comparison_matrix
+    else:
+        normalized["comparison_matrix"] = fallback.get("comparison_matrix") or []
+
+    evidence_highlights = analysis.get("evidence_highlights")
+    if _is_canonical_evidence_highlights(evidence_highlights):
+        normalized["evidence_highlights"] = evidence_highlights
+    else:
+        normalized["evidence_highlights"] = fallback.get("evidence_highlights") or []
+
+    source_contract = fallback.get("source_contract")
+    if isinstance(source_contract, dict):
+        normalized["source_contract"] = dict(source_contract)
+    if isinstance(analysis.get("source_contract"), dict):
+        normalized["source_contract"].update(analysis["source_contract"])
+    return normalized
+
+
+def _normalize_diagnosis_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        items: list[dict[str, Any]] = []
+        for key, raw_item in value.items():
+            text = _text_value(raw_item)
+            if not text:
+                continue
+            items.append(
+                {
+                    "title": _humanize_key(str(key)),
+                    "evidence": text,
+                    "recommendation": text,
+                    "confidence": "medium",
+                }
+            )
+        if items:
+            return items[:6]
+    return [
+        {
+            "title": _text_value(item.get("title"), fallback="Diagnostico"),
+            "evidence": _text_value(item.get("evidence") or item.get("meta")),
+            "recommendation": _text_value(
+                item.get("recommendation") or item.get("body") or item.get("action")
+            ),
+            "confidence": _text_value(item.get("confidence"), fallback="medium"),
+        }
+        for item in _coerce_object_list(value, fallback=fallback)
+    ][:6]
+
+
+def _normalize_content_pattern_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "pattern": _text_value(
+                item.get("pattern") or item.get("tipo") or item.get("format"),
+                fallback="Padrao de conteudo",
+            ),
+            "evidence": _text_value(
+                item.get("evidence") or item.get("metricas") or item.get("metrics")
+            ),
+            "how_to_use": _text_value(
+                item.get("how_to_use")
+                or item.get("recommendation")
+                or item.get("acao")
+                or item.get("action")
+            ),
+        }
+        for item in _coerce_object_list(value, fallback=fallback)
+    ][:6]
+
+
+def _normalize_insight_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        rows = value.get("benchmark_valores") or value.get("items") or value.get("rows")
+        if isinstance(rows, list):
+            value = rows
+    return [
+        {
+            "title": _text_value(
+                item.get("title") or item.get("perfil") or item.get("handle"),
+                fallback="Insight de benchmark",
+            ),
+            "evidence": _text_value(item.get("evidence") or item.get("metricas") or item),
+            "recommendation": _text_value(
+                item.get("recommendation") or item.get("acao") or item.get("action")
+            ),
+            "confidence": _text_value(item.get("confidence"), fallback="medium"),
+        }
+        for item in _coerce_object_list(value, fallback=fallback)
+    ][:6]
+
+
+def _normalize_opportunity_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "priority": _text_value(
+                item.get("priority") or item.get("prioridade"),
+                fallback="media",
+            ),
+            "title": _text_value(item.get("title") or item.get("titulo"), fallback="Oportunidade"),
+            "action": _text_value(
+                item.get("action") or item.get("description") or item.get("descricao")
+            ),
+            "evidence": _text_value(item.get("evidence") or item.get("evidencia")),
+        }
+        for item in _coerce_object_list(value, fallback=fallback)
+    ][:6]
+
+
+def _normalize_action_plan_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    items = _coerce_object_list(value, fallback=fallback)
+    return [
+        {
+            "day": _text_value(item.get("day") or item.get("dia"), fallback=f"Passo {index + 1}"),
+            "action": _text_value(item.get("action") or item.get("acao") or item.get("title")),
+            "expected_signal": _text_value(
+                item.get("expected_signal") or item.get("sinal_esperado")
+            ),
+            "evidence": _text_value(item.get("evidence") or item.get("evidencia")),
+        }
+        for index, item in enumerate(items)
+    ][:8]
+
+
+def _normalize_truth_block_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    return [
+        {
+            "key": _text_value(item.get("key") or item.get("campo"), fallback="dado_ausente"),
+            "rule": _text_value(item.get("rule") or item.get("regra") or item.get("description")),
+        }
+        for item in _coerce_object_list(value, fallback=fallback)
+    ][:8]
+
+
+def _coerce_object_list(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
+    if isinstance(value, list):
+        items = value
+    else:
+        items = []
+    if not items:
+        items = fallback if isinstance(fallback, list) else []
+    coerced: list[dict[str, Any]] = []
+    for item in items:
+        if isinstance(item, dict):
+            coerced.append(item)
+        elif isinstance(item, str) and item.strip():
+            coerced.append({"title": item.strip(), "action": item.strip(), "rule": item.strip()})
+    return coerced
+
+
+def _summary_value(value: Any, *, fallback: str) -> str:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if isinstance(value, dict):
+        segmento = value.get("segmento") or value.get("segment") or value.get("nicho")
+        perfil = value.get("perfil") or value.get("profile") or value.get("handle")
+        posts = value.get("posts") or value.get("conteudos") or value.get("contents")
+        parts = []
+        if perfil:
+            parts.append(f"Perfil analisado: {_text_value(perfil)}")
+        if segmento:
+            parts.append(f"hipotese de segmento: {_text_value(segmento)}")
+        if posts:
+            parts.append(f"base de posts: {_text_value(posts)}")
+        if parts:
+            return ". ".join(parts) + "."
+        return _text_value(value, fallback=fallback)
+    return fallback
+
+
+def _is_canonical_comparison_matrix(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, dict) for item in value)
+        and any(item.get("kind") for item in value if isinstance(item, dict))
+    )
+
+
+def _is_canonical_evidence_highlights(value: Any) -> bool:
+    return (
+        isinstance(value, list)
+        and all(isinstance(item, dict) for item in value)
+        and any(item.get("source") for item in value if isinstance(item, dict))
+    )
+
+
+def _text_value(value: Any, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    if isinstance(value, str):
+        return value.strip() or fallback
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    try:
+        return json.dumps(value, ensure_ascii=False, default=str)[:800]
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _humanize_key(value: str) -> str:
+    cleaned = value.replace("_", " ").replace("-", " ").strip()
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else "Diagnostico"
 
 
 def _build_comparison_matrix(
