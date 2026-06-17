@@ -7,7 +7,7 @@ import httpx
 
 from app.core.config import Settings
 
-SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v3"
+SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v4"
 
 
 class AIRewriteError(Exception):
