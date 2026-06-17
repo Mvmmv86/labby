@@ -198,12 +198,25 @@ def test_openai_specialist_analysis_output_is_normalized_to_contract() -> None:
         },
         "benchmark_insights": {
             "benchmark_valores": [
-                {"perfil": "evandro_pit", "taxa_engajamento": 0.25}
+                {
+                    "insight": "Referencia com maior interacao",
+                    "details": "evandro_pit teve mais comentarios na amostra.",
+                    "confidence": "high",
+                }
             ]
         },
         "content_patterns": [{"tipo": "VIDEO", "metricas": {"likes": 50}}],
         "action_plan": [
-            "Validar a promessa da bio",
+            {
+                "day": "7",
+                "title": "Validar a promessa da bio",
+                "action": "Reescrever a bio",
+                "why_it_matters": "A bio precisa explicar o ganho em segundos.",
+                "how_to_execute": "Usar publico, dor, mecanismo e proximo passo.",
+                "expected_signal": "Mais visitas viram seguidores.",
+                "measurement": "Medir seguidores novos por post.",
+                "evidence": "Bio conectada pouco clara.",
+            },
             "Separar melhores posts",
         ],
         "comparison_matrix": [{"metrica": "seguidores", "perfil": 1364}],
@@ -223,8 +236,20 @@ def test_openai_specialist_analysis_output_is_normalized_to_contract() -> None:
     assert isinstance(normalized["diagnosis"], list)
     assert normalized["diagnosis"][0]["title"] == "Forcas"
     assert isinstance(normalized["benchmark_insights"], list)
-    assert normalized["benchmark_insights"][0]["title"] == "evandro_pit"
+    assert normalized["benchmark_insights"][0]["title"] == "Referencia com maior interacao"
+    assert normalized["benchmark_insights"][0]["evidence"] == (
+        "evandro_pit teve mais comentarios na amostra."
+    )
     assert normalized["action_plan"][0]["day"] == "Passo 1"
-    assert normalized["action_plan"][0]["action"] == "Validar a promessa da bio"
+    assert normalized["action_plan"][1]["day"] == "Passo 2"
+    assert normalized["action_plan"][0]["title"] == "Validar a promessa da bio"
+    assert normalized["action_plan"][0]["action"] == "Reescrever a bio"
+    assert normalized["action_plan"][0]["why_it_matters"] == (
+        "A bio precisa explicar o ganho em segundos."
+    )
+    assert normalized["action_plan"][0]["how_to_execute"] == (
+        "Usar publico, dor, mecanismo e proximo passo."
+    )
+    assert normalized["action_plan"][0]["measurement"] == "Medir seguidores novos por post."
     assert normalized["comparison_matrix"][0]["kind"] == "perfil_conectado"
     assert normalized["comparison_matrix"][0]["handle"] == "gvcripto"

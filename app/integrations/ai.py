@@ -7,7 +7,7 @@ import httpx
 
 from app.core.config import Settings
 
-SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v4"
+SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v5"
 
 
 class AIRewriteError(Exception):
@@ -342,38 +342,96 @@ class FallbackAISpecialistAnalysisClient:
             "action_plan": [
                 {
                     "day": "Dia 1",
+                    "title": "Ajustar promessa da bio e dos destaques",
                     "action": "Auditar bio, destaques e posts fixados com a promessa unica.",
+                    "why_it_matters": (
+                        "A bio e a primeira decisao do visitante. Se ela nao deixa claro "
+                        "para quem o perfil existe, qual dor resolve e qual resultado promete, "
+                        "os posts podem ate performar, mas parte do publico certo nao entende "
+                        "por que seguir ou chamar."
+                    ),
+                    "how_to_execute": (
+                        "Reescrever em uma frase: publico-alvo + problema + mecanismo + "
+                        "resultado esperado + proximo passo. Depois alinhar destaques e posts "
+                        "fixados com essa mesma promessa."
+                    ),
                     "expected_signal": (
                         "Visitante entende em ate 5 segundos quem e atendido e por que seguir."
+                    ),
+                    "measurement": (
+                        "Acompanhar visitas ao perfil, novos seguidores por post e cliques no link "
+                        "nos 7 dias posteriores."
                     ),
                     "evidence": "Bio e website retornados pela fonte conectada.",
                 },
                 {
                     "day": "Dias 2-3",
+                    "title": "Mapear os posts que mais deram sinal real",
                     "action": (
                         "Desmontar os 3 melhores posts proprios e os 3 melhores das "
                         "referencias."
                     ),
+                    "why_it_matters": (
+                        "Os melhores posts mostram o que ja venceu a barreira de atencao. "
+                        "Comparar o perfil conectado com referencias publicas ajuda a separar "
+                        "formato, gancho, promessa e prova sem inventar dados de audiencia."
+                    ),
+                    "how_to_execute": (
+                        "Criar uma tabela com: abertura do post, formato, promessa, prova usada, "
+                        "CTA, likes, comentarios e ER publico por seguidores. Marcar o que se "
+                        "repete entre o perfil e as referencias."
+                    ),
                     "expected_signal": (
                         "Matriz com gancho, prova, CTA e metrica observada por post."
+                    ),
+                    "measurement": (
+                        "Identificar ao menos 3 mecanismos reutilizaveis e 2 lacunas claras antes "
+                        "de produzir novos conteudos."
                     ),
                     "evidence": "Top contents conectados e top posts publicos sincronizados.",
                 },
                 {
                     "day": "Dias 4-7",
+                    "title": "Publicar testes com prova e objecao",
                     "action": "Publicar 3 testes: autoridade, objecao e prova social.",
+                    "why_it_matters": (
+                        "Conteudos de prova, resultado concreto e objecao tendem a gerar "
+                        "comentarios mais qualificados do que posts puramente informativos."
+                    ),
+                    "how_to_execute": (
+                        "Transformar um resultado, uma duvida frequente e uma leitura de mercado "
+                        "em tres roteiros curtos. Manter o formato que ja aparece como forte na "
+                        "amostra e trocar apenas angulo e promessa."
+                    ),
                     "expected_signal": (
                         "Comparar comentarios/post e ER por alcance contra a linha atual."
+                    ),
+                    "measurement": (
+                        "Medir comentarios, compartilhamentos quando disponiveis, "
+                        "visitas ao perfil e ER publico por seguidores em cada teste."
                     ),
                     "evidence": "Metricas conectadas do perfil e benchmark publico.",
                 },
                 {
                     "day": "Dias 8-14",
+                    "title": "Dobrar no formato vencedor",
                     "action": (
                         "Duplicar o formato vencedor e pausar o formato sem resposta publica."
                     ),
+                    "why_it_matters": (
+                        "A primeira semana valida o mecanismo. A segunda semana deve reduzir "
+                        "dispersao e concentrar producao no que gerou resposta real."
+                    ),
+                    "how_to_execute": (
+                        "Escolher o post com melhor combinacao de comentarios, ER e qualidade de "
+                        "resposta. Criar duas variacoes mantendo o mecanismo e mudando o tema."
+                    ),
                     "expected_signal": (
                         "Crescimento de comentarios qualificados e retencao por visualizacao."
+                    ),
+                    "measurement": (
+                        "Comparar a media dos novos testes com a media dos posts analisados no "
+                        "diagnostico inicial."
                     ),
                     "evidence": "Formato dominante calculado e metricas de cada post.",
                 },
@@ -665,7 +723,9 @@ def _specialist_prompt(analysis_input: dict[str, Any]) -> str:
         "executive_summary deve ser string. diagnosis, content_patterns, "
         "benchmark_insights, opportunities, action_plan, truth_blocks, comparison_matrix "
         "e evidence_highlights devem ser arrays de objetos, nunca objeto solto. "
-        "action_plan deve usar objetos com day, action, expected_signal e evidence. "
+        "action_plan deve usar objetos com title, action, why_it_matters, "
+        "how_to_execute, expected_signal, measurement e evidence. Nao use numeracao "
+        "solta ou dias nao sequenciais; a plataforma vai enumerar os passos. "
         "A comparison_matrix deve comparar perfil conectado e referencias publicas com "
         "metricas normalizadas quando existirem. evidence_highlights deve trazer ate 3 "
         "posts do perfil conectado e ate 3 posts de cada referencia publica sincronizada, "
@@ -809,12 +869,24 @@ def _normalize_insight_items(value: Any, *, fallback: Any) -> list[dict[str, Any
     return [
         {
             "title": _text_value(
-                item.get("title") or item.get("perfil") or item.get("handle"),
+                item.get("title")
+                or item.get("insight")
+                or item.get("perfil")
+                or item.get("handle"),
                 fallback="Insight de benchmark",
             ),
-            "evidence": _text_value(item.get("evidence") or item.get("metricas") or item),
+            "evidence": _text_value(
+                item.get("evidence")
+                or item.get("details")
+                or item.get("detalhes")
+                or item.get("metricas")
+                or item.get("metrics")
+            ),
             "recommendation": _text_value(
-                item.get("recommendation") or item.get("acao") or item.get("action")
+                item.get("recommendation")
+                or item.get("next_step")
+                or item.get("acao")
+                or item.get("action")
             ),
             "confidence": _text_value(item.get("confidence"), fallback="medium"),
         }
@@ -843,10 +915,35 @@ def _normalize_action_plan_items(value: Any, *, fallback: Any) -> list[dict[str,
     items = _coerce_object_list(value, fallback=fallback)
     return [
         {
-            "day": _text_value(item.get("day") or item.get("dia"), fallback=f"Passo {index + 1}"),
+            "day": f"Passo {index + 1}",
+            "title": _text_value(
+                item.get("title") or item.get("titulo") or item.get("theme"),
+                fallback=_text_value(
+                    item.get("action") or item.get("acao"),
+                    fallback=f"Acao {index + 1}",
+                ),
+            ),
             "action": _text_value(item.get("action") or item.get("acao") or item.get("title")),
+            "why_it_matters": _text_value(
+                item.get("why_it_matters")
+                or item.get("why")
+                or item.get("por_que")
+                or item.get("rationale")
+            ),
+            "how_to_execute": _text_value(
+                item.get("how_to_execute")
+                or item.get("how")
+                or item.get("como_executar")
+                or item.get("execution")
+            ),
             "expected_signal": _text_value(
                 item.get("expected_signal") or item.get("sinal_esperado")
+            ),
+            "measurement": _text_value(
+                item.get("measurement")
+                or item.get("measure")
+                or item.get("como_medir")
+                or item.get("metric")
             ),
             "evidence": _text_value(item.get("evidence") or item.get("evidencia")),
         }
@@ -858,10 +955,33 @@ def _normalize_truth_block_items(value: Any, *, fallback: Any) -> list[dict[str,
     return [
         {
             "key": _text_value(item.get("key") or item.get("campo"), fallback="dado_ausente"),
-            "rule": _text_value(item.get("rule") or item.get("regra") or item.get("description")),
+            "rule": _truth_block_rule(
+                _text_value(item.get("key") or item.get("campo"), fallback="dado_ausente"),
+                _text_value(item.get("rule") or item.get("regra") or item.get("description")),
+            ),
         }
         for item in _coerce_object_list(value, fallback=fallback)
     ][:8]
+
+
+def _truth_block_rule(key: str, raw_rule: str) -> str:
+    if key == "audience_demographics":
+        return (
+            "A fonte conectada nao retornou idade, genero, cidade ou pais da audiencia. "
+            "A IA pode inferir posicionamento pelos posts e pela bio, mas nao pode afirmar "
+            "demografia como fato."
+        )
+    if key == "public_reference_performance":
+        return (
+            "As referencias ainda nao tinham posts publicos suficientes no momento da analise. "
+            "A IA nao deve comparar performance externa sem posts sincronizados."
+        )
+    if key == "post_level_engagement":
+        return (
+            "A fonte nao retornou engajamento por post suficiente. A IA deve evitar ranking "
+            "de conteudo ate haver metricas reais."
+        )
+    return raw_rule or "Nao afirmar como fato; tratar como dado ausente ou inferencia limitada."
 
 
 def _coerce_object_list(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
