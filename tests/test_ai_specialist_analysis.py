@@ -242,6 +242,7 @@ def test_openai_specialist_analysis_output_is_normalized_to_contract() -> None:
     )
     assert normalized["action_plan"][0]["day"] == "Passo 1"
     assert normalized["action_plan"][1]["day"] == "Passo 2"
+    assert len(normalized["action_plan"]) >= 4
     assert normalized["action_plan"][0]["title"] == "Validar a promessa da bio"
     assert normalized["action_plan"][0]["action"] == "Reescrever a bio"
     assert normalized["action_plan"][0]["why_it_matters"] == (
@@ -251,5 +252,7 @@ def test_openai_specialist_analysis_output_is_normalized_to_contract() -> None:
         "Usar publico, dor, mecanismo e proximo passo."
     )
     assert normalized["action_plan"][0]["measurement"] == "Medir seguidores novos por post."
+    assert normalized["action_plan"][1]["why_it_matters"]
+    assert normalized["action_plan"][1]["how_to_execute"]
     assert normalized["comparison_matrix"][0]["kind"] == "perfil_conectado"
     assert normalized["comparison_matrix"][0]["handle"] == "gvcripto"

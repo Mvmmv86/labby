@@ -7,7 +7,8 @@ import httpx
 
 from app.core.config import Settings
 
-SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v5"
+SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v6"
+MIN_SPECIALIST_ACTION_PLAN_ITEMS = 4
 
 
 class AIRewriteError(Exception):
@@ -912,43 +913,86 @@ def _normalize_opportunity_items(value: Any, *, fallback: Any) -> list[dict[str,
 
 
 def _normalize_action_plan_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
-    items = _coerce_object_list(value, fallback=fallback)
+    items = _coerce_object_list(value, fallback=[])
+    fallback_items = _coerce_object_list(fallback, fallback=[])
+    if len(items) < MIN_SPECIALIST_ACTION_PLAN_ITEMS:
+        seen = {
+            _text_value(item.get("title") or item.get("action") or item.get("acao")).lower()
+            for item in items
+        }
+        for fallback_item in fallback_items:
+            fallback_key = _text_value(
+                fallback_item.get("title")
+                or fallback_item.get("action")
+                or fallback_item.get("acao")
+            ).lower()
+            if fallback_key and fallback_key in seen:
+                continue
+            items.append(fallback_item)
+            if fallback_key:
+                seen.add(fallback_key)
+            if len(items) >= MIN_SPECIALIST_ACTION_PLAN_ITEMS:
+                break
+    if not items:
+        items = fallback_items
     return [
         {
             "day": f"Passo {index + 1}",
             "title": _text_value(
                 item.get("title") or item.get("titulo") or item.get("theme"),
                 fallback=_text_value(
-                    item.get("action") or item.get("acao"),
+                    item.get("action")
+                    or item.get("acao")
+                    or _fallback_field(fallback_items, index, "action"),
                     fallback=f"Acao {index + 1}",
                 ),
             ),
-            "action": _text_value(item.get("action") or item.get("acao") or item.get("title")),
+            "action": _text_value(
+                item.get("action")
+                or item.get("acao")
+                or item.get("title")
+                or _fallback_field(fallback_items, index, "action")
+            ),
             "why_it_matters": _text_value(
                 item.get("why_it_matters")
                 or item.get("why")
                 or item.get("por_que")
                 or item.get("rationale")
+                or _fallback_field(fallback_items, index, "why_it_matters")
             ),
             "how_to_execute": _text_value(
                 item.get("how_to_execute")
                 or item.get("how")
                 or item.get("como_executar")
                 or item.get("execution")
+                or _fallback_field(fallback_items, index, "how_to_execute")
             ),
             "expected_signal": _text_value(
-                item.get("expected_signal") or item.get("sinal_esperado")
+                item.get("expected_signal")
+                or item.get("sinal_esperado")
+                or _fallback_field(fallback_items, index, "expected_signal")
             ),
             "measurement": _text_value(
                 item.get("measurement")
                 or item.get("measure")
                 or item.get("como_medir")
                 or item.get("metric")
+                or _fallback_field(fallback_items, index, "measurement")
             ),
-            "evidence": _text_value(item.get("evidence") or item.get("evidencia")),
+            "evidence": _text_value(
+                item.get("evidence")
+                or item.get("evidencia")
+                or _fallback_field(fallback_items, index, "evidence")
+            ),
         }
         for index, item in enumerate(items)
     ][:8]
+
+
+def _fallback_field(fallback_items: list[dict[str, Any]], index: int, field: str) -> Any:
+    if index >= len(fallback_items):
+        return None
+    return fallback_items[index].get(field)
 
 
 def _normalize_truth_block_items(value: Any, *, fallback: Any) -> list[dict[str, Any]]:
