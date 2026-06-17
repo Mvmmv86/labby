@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from app.core.rate_limit import RateLimitDecision
 from app.domains.jobs.job_service import JobQueueService
 from app.domains.jobs.registry import JobExecutionContext
 from app.domains.social_media import onboarding_jobs, onboarding_service
@@ -196,6 +197,70 @@ class FakeApifyClient:
         )[:limit]
 
 
+class FakeSpecialistAIClient:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def generate_social_profile_analysis(self, *, analysis_input: dict[str, Any]):
+        from app.integrations.ai import AISpecialistAnalysisResult
+
+        self.calls.append(analysis_input)
+        return AISpecialistAnalysisResult(
+            analysis={
+                "status": "ready",
+                "version": "social_specialist_analysis_v1",
+                "executive_summary": "Analise especialista baseada em dados reais.",
+                "diagnosis": [
+                    {
+                        "title": "Padrao principal",
+                        "evidence": "Posts reais e referencias sincronizadas.",
+                        "recommendation": "Dobrar testes no formato de maior sinal.",
+                        "confidence": "high",
+                    }
+                ],
+                "content_patterns": [],
+                "benchmark_insights": [],
+                "opportunities": [],
+                "action_plan": [],
+                "truth_blocks": [{"key": "audience_demographics"}],
+                "source_contract": {"uses_real_posts": True},
+            },
+            model="fake-specialist",
+            provider="fake",
+            provider_response_id="fake-response",
+            input_tokens=100,
+            output_tokens=50,
+            cost_usd=0.001,
+        )
+
+
+class FakeRateLimiter:
+    def __init__(self, *, allowed: bool = True) -> None:
+        self.allowed = allowed
+        self.calls: list[dict[str, Any]] = []
+
+    def check(
+        self,
+        *,
+        key: str,
+        limit: int,
+        window_seconds: int = 60,
+    ) -> RateLimitDecision:
+        self.calls.append(
+            {
+                "key": key,
+                "limit": limit,
+                "window_seconds": window_seconds,
+            }
+        )
+        return RateLimitDecision(
+            allowed=self.allowed,
+            limit=limit,
+            current=1 if self.allowed else limit + 1,
+            retry_after_seconds=3600,
+        )
+
+
 def make_phyllo_service(
     db_session: Session,
     phyllo_client: FakePhylloClient,
@@ -215,6 +280,17 @@ def make_apify_service(
         db_session,
         job_queue=JobQueueService(db_session),
         apify_client=apify_client,
+    )
+
+
+def make_specialist_service(
+    db_session: Session,
+    specialist_ai_client: FakeSpecialistAIClient,
+) -> SocialOnboardingService:
+    return SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        specialist_ai_client=specialist_ai_client,
     )
 
 
@@ -545,6 +621,116 @@ def test_social_onboarding_diagnostic_uses_real_phyllo_content_metrics(
     assert content_rows[0]["raw_payload"]["engagement"]["comment_count"] == 12
     assert content_rows[0]["data_truth"]["source"] == "phyllo"
     assert float(content_rows[0]["engagement_rate_by_followers"]) == 3.81
+
+
+def test_social_onboarding_specialist_analysis_persists_versioned_result(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    specialist_ai = FakeSpecialistAIClient()
+    service = SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        phyllo_client=phyllo,
+        specialist_ai_client=specialist_ai,
+    )
+    session = service.create_session(current=current_one(), objective="authority")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+    connected, _ = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    queued, job = service.enqueue_specialist_analysis(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+    assert job.job_type == "social.onboarding.specialist_analysis"
+    assert queued["analysis_report"]["specialist_analysis"]["status"] == "queued"
+
+    result = service.run_specialist_analysis(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=queued["analysis_version"],
+    )
+
+    assert result["status"] == "ready"
+    assert len(specialist_ai.calls) == 1
+    ready = service.get_session(current=current_one(), session_id=str(session["id"]))
+    analysis = ready["analysis_report"]["specialist_analysis"]
+    assert analysis["status"] == "ready"
+    assert analysis["analysis_version"] == ready["analysis_version"]
+    assert analysis["provider"] == "fake"
+    assert analysis["model"] == "fake-specialist"
+    assert analysis["executive_summary"] == "Analise especialista baseada em dados reais."
+    assert analysis["truth_blocks"][0]["key"] == "audience_demographics"
+
+    skipped = service.run_specialist_analysis(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=ready["analysis_version"],
+    )
+    assert skipped["skipped"] is True
+    assert len(specialist_ai.calls) == 1
+
+
+def test_social_onboarding_specialist_analysis_budget_blocks_new_paid_job(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    limiter = FakeRateLimiter(allowed=False)
+    service = SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        phyllo_client=phyllo,
+        specialist_ai_client=FakeSpecialistAIClient(),
+        rate_limiter=limiter,
+    )
+    session = service.create_session(current=current_one(), objective="authority")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+    connected, _ = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        service.enqueue_specialist_analysis(
+            current=current_one(),
+            session_id=str(session["id"]),
+        )
+
+    assert exc.value.status_code == 429
+    assert len(limiter.calls) == 1
+    assert limiter.calls[0]["key"].startswith(f"social-specialist-analysis:{TENANT_1}:")
+    assert limiter.calls[0]["limit"] == 20
+    assert limiter.calls[0]["window_seconds"] == 60 * 60 * 24
+    row = db_session.execute(
+        text(
+            """
+            SELECT analysis_report
+            FROM social_onboarding_sessions
+            WHERE id = :session_id
+            """
+        ),
+        {"session_id": str(session["id"])},
+    ).mappings().one()
+    assert "specialist_analysis" not in row["analysis_report"]
 
 
 def test_social_onboarding_reference_profiles_are_globally_deduped(

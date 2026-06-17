@@ -145,6 +145,26 @@ class FakeSocialOnboardingService:
         self.current = current
         return make_session_row(id=UUID(str(session_id)), status="analyzing"), make_job_record()
 
+    def enqueue_specialist_analysis(self, *, current, session_id):
+        self.current = current
+        return (
+            make_session_row(
+                id=UUID(str(session_id)),
+                status="ready",
+                analysis_report={
+                    "specialist_brief": {"ready_for_ai": True},
+                    "specialist_analysis": {
+                        "status": "queued",
+                        "analysis_version": 1,
+                    },
+                },
+            ),
+            make_job_record(
+                job_type="social.onboarding.specialist_analysis",
+                idempotency_key=f"social.onboarding.specialist:{session_id}:v1",
+            ),
+        )
+
 
 def make_current(modules: tuple[str, ...] = ("social_media",)) -> CurrentMembership:
     return CurrentMembership(
@@ -381,3 +401,18 @@ def test_sync_reference_contract() -> None:
         "session_id": str(SESSION_ID),
         "reference_id": str(REFERENCE_ID),
     }
+
+
+def test_enqueue_specialist_analysis_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/specialist-analysis",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["session"]["status"] == "ready"
+    assert body["session"]["analysis_report"]["specialist_analysis"]["status"] == "queued"
+    assert body["job"]["job_type"] == "social.onboarding.specialist_analysis"
+    assert service.current.tenant_id == TENANT_ID

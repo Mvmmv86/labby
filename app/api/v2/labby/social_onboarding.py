@@ -196,6 +196,25 @@ def enqueue_diagnostic(
     )
 
 
+@router.post(
+    "/sessions/{session_id}/specialist-analysis",
+    response_model=SocialOnboardingMutationResponse,
+)
+def enqueue_specialist_analysis(
+    session_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialOnboardingMutationResponse:
+    session, job = service.enqueue_specialist_analysis(
+        current=current,
+        session_id=str(session_id),
+    )
+    return SocialOnboardingMutationResponse(
+        session=_session_response(session),
+        job=_job_response(job),
+    )
+
+
 def _session_response(row: dict) -> SocialOnboardingSessionResponse:
     return SocialOnboardingSessionResponse(
         id=row["id"],

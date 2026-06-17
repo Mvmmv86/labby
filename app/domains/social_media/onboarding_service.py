@@ -16,6 +16,7 @@ from app.core.rate_limit import (
     RedisFixedWindowRateLimiter,
 )
 from app.domains.jobs.job_service import JobQueueService, JobRecord
+from app.integrations.ai import make_ai_specialist_analysis_client
 from app.integrations.apify import (
     ApifyClient,
     ApifyConfigurationError,
@@ -28,6 +29,7 @@ from app.integrations.phyllo import (
 )
 
 SOCIAL_ONBOARDING_DIAGNOSE_JOB = "social.onboarding.diagnose"
+SOCIAL_ONBOARDING_SPECIALIST_JOB = "social.onboarding.specialist_analysis"
 SOCIAL_REFERENCE_SYNC_JOB = "social.references.sync"
 SOCIAL_ONBOARDING_QUEUE = "worker-social-analysis"
 PHYLLO_CONNECT_TIMEOUT_MINUTES = 30
@@ -52,6 +54,7 @@ class SocialOnboardingService:
         settings: Settings | None = None,
         phyllo_client: Any | None = None,
         apify_client: Any | None = None,
+        specialist_ai_client: Any | None = None,
         rate_limiter: PublicRateLimiter | None = None,
     ) -> None:
         self.db = db
@@ -59,6 +62,7 @@ class SocialOnboardingService:
         self.settings = settings or get_settings()
         self.phyllo_client = phyllo_client or PhylloClient(self.settings)
         self.apify_client = apify_client or ApifyClient(self.settings)
+        self.specialist_ai_client = specialist_ai_client
         self.rate_limiter = rate_limiter
 
     def get_current(self, *, current: CurrentMembership) -> dict[str, Any] | None:
@@ -975,6 +979,104 @@ class SocialOnboardingService:
         self.db.commit()
         return self._with_references(dict(row)), job
 
+    def enqueue_specialist_analysis(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+    ) -> tuple[dict[str, Any], JobRecord]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_onboarding_sessions
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status <> 'archived'
+                FOR UPDATE
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "session_id": session_id},
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Onboarding nao encontrado")
+        if row["status"] != "ready":
+            raise HTTPException(status_code=409, detail="Diagnostico ainda nao esta pronto")
+
+        report = dict(row["analysis_report"] or {})
+        brief_value = report.get("specialist_brief")
+        brief = brief_value if isinstance(brief_value, dict) else {}
+        if not brief.get("ready_for_ai"):
+            raise HTTPException(
+                status_code=409,
+                detail="Dados reais insuficientes para analise especialista",
+            )
+
+        analysis_version = int(row["analysis_version"])
+        existing = report.get("specialist_analysis")
+        if (
+            isinstance(existing, dict)
+            and existing.get("analysis_version") == analysis_version
+            and existing.get("status") in {"queued", "running", "ready"}
+        ):
+            job = self._enqueue_specialist_analysis_job(
+                tenant_id=str(current.tenant_id),
+                membership_id=str(current.membership_id),
+                session_id=session_id,
+                analysis_version=analysis_version,
+                commit=False,
+            )
+            self.db.commit()
+            return self._with_references(dict(row)), job
+
+        try:
+            self._enforce_specialist_analysis_budget(tenant_id=str(current.tenant_id))
+        except HTTPException:
+            self.db.rollback()
+            raise
+
+        queued_at = datetime.now(UTC).isoformat()
+        report["specialist_analysis"] = {
+            "status": "queued",
+            "version": "social_specialist_analysis_v1",
+            "analysis_version": analysis_version,
+            "queued_at": queued_at,
+            "provider": None,
+            "model": None,
+        }
+        job = self._enqueue_specialist_analysis_job(
+            tenant_id=str(current.tenant_id),
+            membership_id=str(current.membership_id),
+            session_id=session_id,
+            analysis_version=analysis_version,
+            commit=False,
+        )
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET analysis_report = CAST(:analysis_report AS jsonb),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+                "analysis_report": json.dumps(report),
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=409, detail="Diagnostico mudou durante a solicitacao")
+        self.db.commit()
+        return self._with_references(dict(row)), job
+
     def run_diagnostic(
         self,
         *,
@@ -1083,6 +1185,182 @@ class SocialOnboardingService:
             }
         self.db.commit()
         return {"session_id": session_id, "status": "ready"}
+
+    def run_specialist_analysis(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        analysis_version: int,
+    ) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_onboarding_sessions
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status <> 'archived'
+                FOR UPDATE
+                """
+            ),
+            {"tenant_id": tenant_id, "session_id": session_id},
+        ).mappings().first()
+        if row is None:
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "session_not_found_or_archived",
+                "analysis_version": analysis_version,
+            }
+        current_version = int(row["analysis_version"])
+        if current_version != analysis_version:
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "stale_analysis_version",
+                "analysis_version": analysis_version,
+                "current_analysis_version": current_version,
+            }
+        if row["status"] != "ready":
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "session_not_ready",
+                "status": row["status"],
+                "analysis_version": analysis_version,
+            }
+
+        report = dict(row["analysis_report"] or {})
+        existing = report.get("specialist_analysis")
+        if (
+            isinstance(existing, dict)
+            and existing.get("analysis_version") == analysis_version
+            and existing.get("status") == "ready"
+        ):
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "status": "ready",
+                "analysis_version": analysis_version,
+            }
+        brief_value = report.get("specialist_brief")
+        brief = brief_value if isinstance(brief_value, dict) else {}
+        if not brief.get("ready_for_ai"):
+            raise ValueError("Dados reais insuficientes para analise especialista")
+
+        running = dict(existing) if isinstance(existing, dict) else {}
+        running.update(
+            {
+                "status": "running",
+                "version": "social_specialist_analysis_v1",
+                "analysis_version": analysis_version,
+                "started_at": datetime.now(UTC).isoformat(),
+                "error_code": None,
+                "error_message": None,
+            }
+        )
+        report["specialist_analysis"] = running
+        self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET analysis_report = CAST(:analysis_report AS jsonb),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+                "analysis_report": json.dumps(report),
+            },
+        )
+        self.db.commit()
+
+        client = self.specialist_ai_client or make_ai_specialist_analysis_client(self.settings)
+        result = client.generate_social_profile_analysis(
+            analysis_input=_build_specialist_analysis_input(
+                session=dict(row),
+                report=report,
+                analysis_version=analysis_version,
+            )
+        )
+        completed_analysis = dict(result.analysis)
+        completed_analysis.update(
+            {
+                "status": "ready",
+                "version": completed_analysis.get("version") or "social_specialist_analysis_v1",
+                "analysis_version": analysis_version,
+                "provider": result.provider,
+                "model": result.model,
+                "provider_response_id": result.provider_response_id,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost_usd": result.cost_usd,
+                "completed_at": datetime.now(UTC).isoformat(),
+            }
+        )
+
+        latest = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_onboarding_sessions
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                FOR UPDATE
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+            },
+        ).mappings().first()
+        if latest is None:
+            self.db.rollback()
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "session_changed_before_save",
+                "analysis_version": analysis_version,
+            }
+        latest_report = dict(latest["analysis_report"] or {})
+        latest_report["specialist_analysis"] = completed_analysis
+        self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET analysis_report = CAST(:analysis_report AS jsonb),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+                "analysis_report": json.dumps(latest_report),
+            },
+        )
+        self.db.commit()
+        return {
+            "session_id": session_id,
+            "status": "ready",
+            "analysis_version": analysis_version,
+            "provider": result.provider,
+            "model": result.model,
+        }
 
     def run_public_reference_sync(
         self,
@@ -1776,6 +2054,66 @@ class SocialOnboardingService:
         )
         self.db.commit()
 
+    def mark_specialist_analysis_failed(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+        analysis_version: int,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        row = self.db.execute(
+            text(
+                """
+                SELECT analysis_report
+                FROM social_onboarding_sessions
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                FOR UPDATE
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
+            return
+        report = dict(row["analysis_report"] or {})
+        report["specialist_analysis"] = {
+            "status": "failed",
+            "version": "social_specialist_analysis_v1",
+            "analysis_version": analysis_version,
+            "error_code": error_code[:120],
+            "error_message": error_message[:2000],
+            "failed_at": datetime.now(UTC).isoformat(),
+        }
+        self.db.execute(
+            text(
+                """
+                UPDATE social_onboarding_sessions
+                SET analysis_report = CAST(:analysis_report AS jsonb),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND analysis_version = :analysis_version
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+                "analysis_report": json.dumps(report),
+            },
+        )
+        self.db.commit()
+
     def _enqueue_diagnostic_job(
         self,
         *,
@@ -1809,6 +2147,26 @@ class SocialOnboardingService:
             idempotency_key=f"social.onboarding.diagnose:{session_id}:v{analysis_version}",
             payload={"session_id": session_id, "analysis_version": analysis_version},
             max_attempts=3,
+            commit=commit,
+        )
+
+    def _enqueue_specialist_analysis_job(
+        self,
+        *,
+        tenant_id: str,
+        membership_id: str | None,
+        session_id: str,
+        analysis_version: int,
+        commit: bool,
+    ) -> JobRecord:
+        return self.job_queue.enqueue_job(
+            tenant_id=tenant_id,
+            membership_id=membership_id,
+            job_type=SOCIAL_ONBOARDING_SPECIALIST_JOB,
+            queue_name=SOCIAL_ONBOARDING_QUEUE,
+            idempotency_key=f"social.onboarding.specialist:{session_id}:v{analysis_version}",
+            payload={"session_id": session_id, "analysis_version": analysis_version},
+            max_attempts=1,
             commit=commit,
         )
 
@@ -1857,6 +2215,30 @@ class SocialOnboardingService:
             limit=self.settings.apify_public_reference_sync_limit_per_day,
             window_seconds=60 * 60 * 24,
         )
+
+    def _enforce_specialist_analysis_budget(self, *, tenant_id: str) -> None:
+        day = datetime.now(UTC).strftime("%Y%m%d")
+        limiter = self._public_reference_rate_limiter()
+        if limiter is None:
+            return
+        key = f"social-specialist-analysis:{tenant_id}:{day}"
+        try:
+            decision = limiter.check(
+                key=key,
+                limit=self.settings.social_specialist_analysis_limit_per_day,
+                window_seconds=60 * 60 * 24,
+            )
+        except RateLimitUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Limitador de custo indisponivel",
+            ) from exc
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Limite diario de analises especialistas atingido",
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
 
     def _enforce_public_reference_limit(
         self,
@@ -3345,6 +3727,51 @@ def _build_specialist_brief(
         ],
         "blocked_inputs": blocked_inputs,
         "next_analysis_step": reference_context["next_step"],
+    }
+
+
+def _build_specialist_analysis_input(
+    *,
+    session: dict[str, Any],
+    report: dict[str, Any],
+    analysis_version: int,
+) -> dict[str, Any]:
+    clean_report = dict(report)
+    clean_report.pop("specialist_analysis", None)
+    top_contents = clean_report.get("top_contents")
+    if isinstance(top_contents, list):
+        clean_report["top_contents"] = top_contents[:12]
+    observed = clean_report.get("observed_facts")
+    if isinstance(observed, list):
+        clean_report["observed_facts"] = observed[:10]
+    computed = clean_report.get("computed_insights")
+    if isinstance(computed, list):
+        clean_report["computed_insights"] = computed[:10]
+    inferred = clean_report.get("inferred_insights")
+    if isinstance(inferred, list):
+        clean_report["inferred_insights"] = inferred[:8]
+    missing = clean_report.get("missing_data")
+    if isinstance(missing, list):
+        clean_report["missing_data"] = missing[:8]
+    return {
+        "version": "social_specialist_analysis_input_v1",
+        "analysis_version": analysis_version,
+        "session": {
+            "id": str(session.get("id")),
+            "objective": session.get("objective"),
+            "primary_provider": session.get("primary_provider"),
+            "connection_mode": session.get("connection_mode"),
+            "connected_account_handle": session.get("connected_account_handle"),
+            "connected_account_name": session.get("connected_account_name"),
+        },
+        "report": clean_report,
+        "non_negotiable_rules": [
+            "Nao inventar dado ausente.",
+            "Nao afirmar demografia sem fonte conectada.",
+            "Nao usar dados privados de referencias publicas.",
+            "Toda recomendacao precisa citar evidencia real ou declarar baixa confianca.",
+            "Separar fatos, calculos e inferencias.",
+        ],
     }
 
 
