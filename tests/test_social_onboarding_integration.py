@@ -685,6 +685,74 @@ def test_social_onboarding_specialist_analysis_persists_versioned_result(
     assert len(specialist_ai.calls) == 1
 
 
+def test_social_onboarding_specialist_analysis_requeues_after_failed_attempt(
+    db_session: Session,
+) -> None:
+    phyllo = FakePhylloClient()
+    service = SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        phyllo_client=phyllo,
+        specialist_ai_client=FakeSpecialistAIClient(),
+    )
+    session = service.create_session(current=current_one(), objective="authority")
+    service.create_phyllo_connect_token(current=current_one(), session_id=str(session["id"]))
+    connected, _ = service.complete_phyllo_connection(
+        current=current_one(),
+        session_id=str(session["id"]),
+        phyllo_user_id="phyllo-user-1",
+        account_id="phyllo-account-1",
+        work_platform_id="9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+    )
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=connected["analysis_version"],
+    )
+
+    queued, first_job = service.enqueue_specialist_analysis(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+    first_analysis = queued["analysis_report"]["specialist_analysis"]
+    assert first_analysis["request_generation"] == 1
+    assert first_job.idempotency_key.endswith(":r1")
+
+    service.mark_specialist_analysis_failed(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=queued["analysis_version"],
+        request_generation=1,
+        error_code="AITimeoutError",
+        error_message="Timeout na IA",
+    )
+
+    retried, second_job = service.enqueue_specialist_analysis(
+        current=current_one(),
+        session_id=str(session["id"]),
+    )
+    retry_analysis = retried["analysis_report"]["specialist_analysis"]
+
+    assert retry_analysis["status"] == "queued"
+    assert retry_analysis["request_generation"] == 2
+    assert second_job.id != first_job.id
+    assert second_job.idempotency_key.endswith(":r2")
+
+    jobs = db_session.execute(
+        text(
+            """
+            SELECT idempotency_key, status
+            FROM jobs
+            WHERE tenant_id = :tenant_id
+              AND job_type = 'social.onboarding.specialist_analysis'
+            ORDER BY created_at ASC
+            """
+        ),
+        {"tenant_id": str(TENANT_1)},
+    ).mappings().all()
+    assert [row["idempotency_key"].rsplit(":", 1)[-1] for row in jobs] == ["r1", "r2"]
+
+
 def test_social_onboarding_specialist_analysis_budget_blocks_new_paid_job(
     db_session: Session,
 ) -> None:

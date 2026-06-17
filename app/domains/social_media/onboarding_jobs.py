@@ -90,6 +90,11 @@ def generate_social_specialist_analysis(context: JobExecutionContext) -> dict:
         version = int(analysis_version)
     except (TypeError, ValueError) as exc:
         raise PermanentJobError("analysis_version invalida") from exc
+    request_generation = context.payload.get("request_generation")
+    try:
+        generation = int(request_generation) if request_generation is not None else None
+    except (TypeError, ValueError) as exc:
+        raise PermanentJobError("request_generation invalida") from exc
 
     with SessionLocal() as db:
         service = SocialOnboardingService(db, job_queue=JobQueueService(db))
@@ -98,6 +103,7 @@ def generate_social_specialist_analysis(context: JobExecutionContext) -> dict:
                 tenant_id=context.tenant_id,
                 session_id=str(session_id),
                 analysis_version=version,
+                request_generation=generation,
             )
         except Exception as exc:
             db.rollback()
@@ -105,6 +111,7 @@ def generate_social_specialist_analysis(context: JobExecutionContext) -> dict:
                 tenant_id=context.tenant_id,
                 session_id=str(session_id),
                 analysis_version=version,
+                request_generation=generation,
                 error_code=exc.__class__.__name__,
                 error_message=str(exc),
             )

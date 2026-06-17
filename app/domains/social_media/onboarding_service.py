@@ -1017,6 +1017,11 @@ class SocialOnboardingService:
 
         analysis_version = int(row["analysis_version"])
         existing = report.get("specialist_analysis")
+        existing_request_generation = (
+            _int_value(existing.get("request_generation"))
+            if isinstance(existing, dict)
+            else 0
+        )
         if (
             isinstance(existing, dict)
             and existing.get("version") == SOCIAL_SPECIALIST_ANALYSIS_VERSION
@@ -1028,6 +1033,7 @@ class SocialOnboardingService:
                 membership_id=str(current.membership_id),
                 session_id=session_id,
                 analysis_version=analysis_version,
+                request_generation=max(existing_request_generation, 1),
                 commit=False,
             )
             self.db.commit()
@@ -1040,10 +1046,12 @@ class SocialOnboardingService:
             raise
 
         queued_at = datetime.now(UTC).isoformat()
+        request_generation = existing_request_generation + 1
         report["specialist_analysis"] = {
             "status": "queued",
             "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
             "analysis_version": analysis_version,
+            "request_generation": request_generation,
             "queued_at": queued_at,
             "provider": None,
             "model": None,
@@ -1053,6 +1061,7 @@ class SocialOnboardingService:
             membership_id=str(current.membership_id),
             session_id=session_id,
             analysis_version=analysis_version,
+            request_generation=request_generation,
             commit=False,
         )
         row = self.db.execute(
@@ -1196,6 +1205,7 @@ class SocialOnboardingService:
         tenant_id: str,
         session_id: str,
         analysis_version: int,
+        request_generation: int | None = None,
     ) -> dict[str, Any]:
         row = self.db.execute(
             text(
@@ -1237,6 +1247,20 @@ class SocialOnboardingService:
 
         report = dict(row["analysis_report"] or {})
         existing = report.get("specialist_analysis")
+        existing_request_generation = (
+            _int_value(existing.get("request_generation"))
+            if isinstance(existing, dict)
+            else 0
+        )
+        if request_generation is not None and existing_request_generation != request_generation:
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "stale_specialist_request_generation",
+                "analysis_version": analysis_version,
+                "request_generation": request_generation,
+                "current_request_generation": existing_request_generation,
+            }
         if (
             isinstance(existing, dict)
             and existing.get("version") == SOCIAL_SPECIALIST_ANALYSIS_VERSION
@@ -1260,6 +1284,7 @@ class SocialOnboardingService:
                 "status": "running",
                 "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
                 "analysis_version": analysis_version,
+                "request_generation": existing_request_generation or request_generation or 1,
                 "started_at": datetime.now(UTC).isoformat(),
                 "error_code": None,
                 "error_message": None,
@@ -1301,6 +1326,7 @@ class SocialOnboardingService:
                 "status": "ready",
                 "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
                 "analysis_version": analysis_version,
+                "request_generation": existing_request_generation or request_generation or 1,
                 "provider": result.provider,
                 "model": result.model,
                 "provider_response_id": result.provider_response_id,
@@ -1338,6 +1364,23 @@ class SocialOnboardingService:
                 "analysis_version": analysis_version,
             }
         latest_report = dict(latest["analysis_report"] or {})
+        latest_existing = latest_report.get("specialist_analysis")
+        latest_generation = (
+            _int_value(latest_existing.get("request_generation"))
+            if isinstance(latest_existing, dict)
+            else 0
+        )
+        expected_generation = existing_request_generation or request_generation or 1
+        if latest_generation != expected_generation:
+            self.db.rollback()
+            return {
+                "session_id": session_id,
+                "skipped": True,
+                "reason": "specialist_request_changed_before_save",
+                "analysis_version": analysis_version,
+                "request_generation": expected_generation,
+                "current_request_generation": latest_generation,
+            }
         latest_report["specialist_analysis"] = completed_analysis
         self.db.execute(
             text(
@@ -2065,6 +2108,7 @@ class SocialOnboardingService:
         tenant_id: str,
         session_id: str,
         analysis_version: int,
+        request_generation: int | None = None,
         error_code: str,
         error_message: str,
     ) -> None:
@@ -2090,10 +2134,20 @@ class SocialOnboardingService:
             self.db.rollback()
             return
         report = dict(row["analysis_report"] or {})
+        existing = report.get("specialist_analysis")
+        existing_generation = (
+            _int_value(existing.get("request_generation"))
+            if isinstance(existing, dict)
+            else 0
+        )
+        if request_generation is not None and existing_generation != request_generation:
+            self.db.rollback()
+            return
         report["specialist_analysis"] = {
             "status": "failed",
             "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
             "analysis_version": analysis_version,
+            "request_generation": existing_generation or request_generation or 1,
             "error_code": error_code[:120],
             "error_message": error_message[:2000],
             "failed_at": datetime.now(UTC).isoformat(),
@@ -2162,6 +2216,7 @@ class SocialOnboardingService:
         membership_id: str | None,
         session_id: str,
         analysis_version: int,
+        request_generation: int,
         commit: bool,
     ) -> JobRecord:
         return self.job_queue.enqueue_job(
@@ -2171,9 +2226,13 @@ class SocialOnboardingService:
             queue_name=SOCIAL_ONBOARDING_QUEUE,
             idempotency_key=(
                 f"social.onboarding.specialist:{session_id}:v{analysis_version}:"
-                f"{SOCIAL_SPECIALIST_ANALYSIS_VERSION}"
+                f"{SOCIAL_SPECIALIST_ANALYSIS_VERSION}:r{request_generation}"
             ),
-            payload={"session_id": session_id, "analysis_version": analysis_version},
+            payload={
+                "session_id": session_id,
+                "analysis_version": analysis_version,
+                "request_generation": request_generation,
+            },
             max_attempts=1,
             commit=commit,
         )
