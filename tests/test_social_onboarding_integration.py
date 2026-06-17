@@ -202,13 +202,16 @@ class FakeSpecialistAIClient:
         self.calls: list[dict[str, Any]] = []
 
     def generate_social_profile_analysis(self, *, analysis_input: dict[str, Any]):
-        from app.integrations.ai import AISpecialistAnalysisResult
+        from app.integrations.ai import (
+            SOCIAL_SPECIALIST_ANALYSIS_VERSION,
+            AISpecialistAnalysisResult,
+        )
 
         self.calls.append(analysis_input)
         return AISpecialistAnalysisResult(
             analysis={
                 "status": "ready",
-                "version": "social_specialist_analysis_v1",
+                "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
                 "executive_summary": "Analise especialista baseada em dados reais.",
                 "diagnosis": [
                     {

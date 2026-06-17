@@ -7,6 +7,8 @@ import httpx
 
 from app.core.config import Settings
 
+SOCIAL_SPECIALIST_ANALYSIS_VERSION = "social_specialist_analysis_v2"
+
 
 class AIRewriteError(Exception):
     """Base error for provider rewrite failures."""
@@ -110,6 +112,16 @@ class FallbackAISpecialistAnalysisClient:
         top_contents = top_contents_value if isinstance(top_contents_value, list) else []
         reference_value = report.get("reference_context")
         reference_context = reference_value if isinstance(reference_value, dict) else {}
+        benchmark_value = report.get("competitive_benchmark")
+        benchmark = benchmark_value if isinstance(benchmark_value, dict) else {}
+        connected_value = benchmark.get("connected_profile")
+        connected_profile = connected_value if isinstance(connected_value, dict) else {}
+        aggregate_value = benchmark.get("aggregate")
+        benchmark_aggregate = aggregate_value if isinstance(aggregate_value, dict) else {}
+        reference_profiles_value = benchmark.get("reference_profiles")
+        reference_profiles = (
+            reference_profiles_value if isinstance(reference_profiles_value, list) else []
+        )
         missing_value = report.get("missing_data")
         missing_data = missing_value if isinstance(missing_value, list) else []
         best_format = str(content_metrics.get("best_format") or "conteudo dominante nao definido")
@@ -118,6 +130,26 @@ class FallbackAISpecialistAnalysisClient:
         segment_name = str(segment.get("name") or "segmento inferido")
         references_with_data = int(reference_context.get("references_with_public_data") or 0)
         public_contents_total = int(reference_context.get("public_contents_total") or 0)
+        connected_followers = _int_value(connected_profile.get("followers_count"))
+        connected_posts = _int_value(connected_profile.get("posts_count"))
+        connected_contents = _int_value(connected_profile.get("contents_analyzed"))
+        connected_avg_interactions = _float_value(
+            connected_profile.get("avg_interactions_per_content")
+        )
+        reference_avg_interactions = _float_value(
+            benchmark_aggregate.get("reference_avg_interactions_per_content")
+        )
+        dominant_reference_format = str(
+            benchmark_aggregate.get("dominant_reference_format") or ""
+        )
+        comparison_matrix = _build_comparison_matrix(
+            connected_profile=connected_profile,
+            reference_profiles=reference_profiles,
+        )
+        evidence_highlights = _build_evidence_highlights(
+            top_contents=top_contents,
+            reference_profiles=reference_profiles,
+        )
         blocked = [str(item) for item in specialist_brief.get("blocked_inputs") or []]
         if not blocked and missing_data:
             blocked = [
@@ -125,123 +157,219 @@ class FallbackAISpecialistAnalysisClient:
                 for item in missing_data
                 if isinstance(item, dict)
             ]
+        comparison_sentence = (
+            f"O perfil conectado tem {connected_followers} seguidores, {connected_posts} posts "
+            f"no perfil e {connected_contents} conteudos reais analisados. As referencias "
+            f"sincronizadas somam {public_contents_total} posts publicos."
+        )
+        interaction_sentence = (
+            f"Media de interacoes por post: perfil {connected_avg_interactions:.2f}; "
+            f"referencias {reference_avg_interactions:.2f}."
+            if reference_avg_interactions or connected_avg_interactions
+            else "Ainda nao ha base suficiente para comparar interacoes medias."
+        )
 
         analysis = {
             "status": "ready",
-            "version": "social_specialist_analysis_v1",
+            "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
             "provider": "fallback",
             "model": "fallback-social-specialist",
             "generated_at": datetime.now(UTC).isoformat(),
             "executive_summary": (
-                f"O perfil foi analisado com dados reais conectados e sinais de conteudo. "
-                f"A hipotese principal e {segment_name}. O formato com melhor sinal na amostra "
-                f"e {best_format}. Esta versao nao inventa dados ausentes e deve ser refinada "
-                "quando novas fontes oficiais retornarem mais campos."
+                f"{comparison_sentence} A hipotese principal e {segment_name}. "
+                f"No perfil conectado, o melhor formato lido foi {best_format}; nas "
+                "referencias, o formato dominante foi "
+                f"{dominant_reference_format or 'nao definido'}. "
+                "A leitura abaixo separa fatos, calculos e inferencias para orientar ajustes "
+                "sem inventar demografia ou metricas ausentes."
             ),
+            "comparison_matrix": comparison_matrix,
+            "evidence_highlights": evidence_highlights,
             "diagnosis": [
                 {
-                    "title": "Posicionamento do perfil",
+                    "title": "Posicionamento e promessa do perfil",
                     "evidence": (
-                        "Bio, nome publico, conteudos reais e segmento inferido "
-                        "no truth contract."
+                        f"Bio/nome conectados, {connected_followers} seguidores e segmento "
+                        f"inferido como {segment_name}."
                     ),
                     "recommendation": (
-                        "Transformar a promessa do perfil em uma frase mensuravel: para quem, "
-                        "qual dor, qual resultado esperado e qual proximo passo."
+                        "Reescrever a promessa em uma frase de decisao: para quem e o perfil, "
+                        "qual problema resolve, que resultado concreto entrega e qual proximo "
+                        "passo o visitante deve tomar."
                     ),
                     "confidence": "medium",
                 },
                 {
-                    "title": "Padrao de conteudo com tracao",
+                    "title": "Tracao real do conteudo conectado",
                     "evidence": f"Top content real: {top_title[:240]}",
                     "recommendation": (
-                        "Mapear gancho, formato, prova e chamada para acao dos melhores posts "
-                        "antes de criar novos temas."
+                        "Extrair o gancho, a promessa, a prova e o CTA dos 3 melhores posts "
+                        "conectados antes de abrir novos temas."
                     ),
                     "confidence": "high" if top_contents else "low",
+                },
+                {
+                    "title": "Gap contra referencias publicas",
+                    "evidence": interaction_sentence,
+                    "recommendation": (
+                        "Comparar por interacoes medias, ER por seguidores e formato dominante, "
+                        "nao por seguidores absolutos. Use as referencias para modelar estruturas "
+                        "de gancho e prova, nao para copiar estilo sem contexto."
+                    ),
+                    "confidence": "high" if references_with_data else "low",
+                },
+                {
+                    "title": "Limite tecnico da amostra",
+                    "evidence": (
+                        "Apify forneceu likes e comentarios publicos; saves, shares, reach e "
+                        "demografia podem estar ausentes nas referencias."
+                    ),
+                    "recommendation": (
+                        "Tratar comparativo publico como leitura de conteudo e distribuicao, "
+                        "mantendo demografia e sinais privados fora das conclusoes."
+                    ),
+                    "confidence": "high",
                 },
             ],
             "content_patterns": [
                 {
                     "pattern": best_format,
-                    "evidence": "Formato calculado a partir dos posts reais sincronizados.",
+                    "evidence": (
+                        f"Formato dominante no perfil conectado. {interaction_sentence}"
+                    ),
                     "how_to_use": (
-                        "Criar 2 variacoes por semana mantendo o mesmo tipo de gancho "
-                        "e mudando o angulo."
+                        "Criar uma matriz de 6 variacoes: 2 ganchos de autoridade, 2 de "
+                        "objecao e 2 de prova, mantendo o formato que ja gerou sinal real."
                     ),
                 },
                 {
-                    "pattern": "Prova social e leitura de contexto",
+                    "pattern": dominant_reference_format or "Referencia sem formato dominante",
                     "evidence": (
-                        "Inferencia limitada pelo segmento e pelas legendas reais retornadas."
+                        "Formato mais recorrente calculado nos posts publicos das referencias."
                     ),
                     "how_to_use": (
-                        "Separar posts de autoridade, educacao e objecoes para medir "
-                        "retencao e resposta."
+                        "Mapear o que esse formato faz bem nas referencias: abertura, prova, "
+                        "contexto e convite de resposta. Adaptar o mecanismo, nao copiar texto."
+                    ),
+                },
+                {
+                    "pattern": "Conteudos com prova concreta",
+                    "evidence": _top_reference_evidence(reference_profiles),
+                    "how_to_use": (
+                        "Criar posts que conectem leitura de mercado, experiencia propria e "
+                        "resultado observavel. Medir comentarios e salvamentos como sinais fortes."
                     ),
                 },
             ],
             "benchmark_insights": [
                 {
-                    "title": "Referencias publicas",
+                    "title": "Referencias publicas sincronizadas",
                     "evidence": (
                         f"{references_with_data} referencias com dados reais e "
                         f"{public_contents_total} posts publicos sincronizados."
                     ),
                     "recommendation": (
-                        "Comparar apenas formatos, frequencia e sinais publicos; nao inferir "
-                        "metricas privadas de audiencia."
+                        "Usar as referencias para comparar formato, densidade de prova, "
+                        "frequencia de publicacao e resposta publica. Nao inferir audiencia "
+                        "privada."
                     ),
                     "confidence": "high" if references_with_data else "low",
-                }
+                },
+                *[
+                    {
+                        "title": f"@{ref.get('handle')}",
+                        "evidence": _reference_evidence_line(ref),
+                        "recommendation": _reference_recommendation(
+                            ref,
+                            connected_best_format=best_format,
+                        ),
+                        "confidence": "high",
+                    }
+                    for ref in reference_profiles[:3]
+                    if isinstance(ref, dict)
+                ],
             ],
             "opportunities": [
                 {
                     "priority": "alta",
-                    "title": "Clareza de oferta e promessa",
+                    "title": "Clareza de oferta e promessa mensuravel",
                     "action": (
-                        "Reescrever bio e destaques para deixar explicito o ganho "
-                        "principal do publico."
+                        "Transformar bio, destaques e posts fixados em uma promessa unica: "
+                        "publico, dor, mecanismo, resultado e proximo passo."
                     ),
-                    "evidence": "Oportunidade derivada do perfil conectado e do diagnostico atual.",
+                    "evidence": (
+                        "Bio, website, perfil conectado e segmento inferido no truth contract."
+                    ),
                 },
                 {
                     "priority": "alta",
-                    "title": "Replicar os melhores posts reais",
+                    "title": "Replicar mecanismos dos melhores posts reais",
                     "action": (
-                        "Criar uma matriz com gancho, formato, tema, prova e CTA "
-                        "dos 3 melhores conteudos."
+                        "Criar uma matriz com gancho, formato, tema, prova, CTA, metrica "
+                        "observada e hipotese de por que funcionou."
                     ),
                     "evidence": "Top contents reais disponiveis no report.",
                 },
                 {
                     "priority": "media",
-                    "title": "Benchmark continuo",
+                    "title": "Benchmark ativo contra referencias",
                     "action": (
-                        "Manter 3 a 5 referencias sincronizadas e revisar lacunas "
-                        "a cada ciclo."
+                        "Revisar semanalmente os 5 posts publicos mais fortes das referencias "
+                        "e classificar por tema, promessa, prova e comentario gerado."
                     ),
-                    "evidence": "Reference context do diagnostico.",
+                    "evidence": (
+                        f"{references_with_data} referencias com dados publicos sincronizados."
+                    ),
+                },
+                {
+                    "priority": "media",
+                    "title": "Aumentar qualidade de conversa",
+                    "action": (
+                        "Adicionar perguntas e objecoes reais nos roteiros para deslocar "
+                        "engajamento de curtida passiva para comentario qualificado."
+                    ),
+                    "evidence": (
+                        "Comentarios sao sinal publico disponivel no perfil e nas referencias."
+                    ),
                 },
             ],
             "action_plan": [
                 {
                     "day": "Dia 1",
-                    "action": "Validar promessa do perfil e atualizar bio/destaques.",
-                    "expected_signal": "Mais cliques no link e respostas qualificadas.",
+                    "action": "Auditar bio, destaques e posts fixados com a promessa unica.",
+                    "expected_signal": (
+                        "Visitante entende em ate 5 segundos quem e atendido e por que seguir."
+                    ),
                     "evidence": "Bio e website retornados pela fonte conectada.",
                 },
                 {
                     "day": "Dias 2-3",
-                    "action": "Produzir 2 variacoes do melhor formato real identificado.",
-                    "expected_signal": "Manter ou superar o ER por alcance/views atual.",
-                    "evidence": "Top contents e content_metrics.",
+                    "action": (
+                        "Desmontar os 3 melhores posts proprios e os 3 melhores das "
+                        "referencias."
+                    ),
+                    "expected_signal": (
+                        "Matriz com gancho, prova, CTA e metrica observada por post."
+                    ),
+                    "evidence": "Top contents conectados e top posts publicos sincronizados.",
                 },
                 {
                     "day": "Dias 4-7",
-                    "action": "Comparar temas com referencias sincronizadas e escolher 3 pautas.",
-                    "expected_signal": "Aumento de saves, comentarios ou compartilhamentos.",
-                    "evidence": "Referencias publicas sincronizadas, quando disponiveis.",
+                    "action": "Publicar 3 testes: autoridade, objecao e prova social.",
+                    "expected_signal": (
+                        "Comparar comentarios/post e ER por alcance contra a linha atual."
+                    ),
+                    "evidence": "Metricas conectadas do perfil e benchmark publico.",
+                },
+                {
+                    "day": "Dias 8-14",
+                    "action": (
+                        "Duplicar o formato vencedor e pausar o formato sem resposta publica."
+                    ),
+                    "expected_signal": (
+                        "Crescimento de comentarios qualificados e retencao por visualizacao."
+                    ),
+                    "evidence": "Formato dominante calculado e metricas de cada post.",
                 },
             ],
             "truth_blocks": [
@@ -259,6 +387,7 @@ class FallbackAISpecialistAnalysisClient:
                 "uses_real_posts": bool(top_contents),
                 "uses_public_references": references_with_data > 0,
                 "no_private_reference_data": True,
+                "comparison_method": benchmark.get("method"),
             },
         }
         return AISpecialistAnalysisResult(
@@ -397,7 +526,7 @@ class OpenAIResponsesRewriteClient:
         if not analysis:
             raise AITemporaryError("Provider IA nao retornou JSON valido")
         analysis.setdefault("status", "ready")
-        analysis.setdefault("version", "social_specialist_analysis_v1")
+        analysis.setdefault("version", SOCIAL_SPECIALIST_ANALYSIS_VERSION)
         analysis.setdefault("provider", "openai")
         analysis.setdefault("model", str(data.get("model") or self.model))
         analysis.setdefault("generated_at", datetime.now(UTC).isoformat())
@@ -518,11 +647,167 @@ def _specialist_prompt(analysis_input: dict[str, Any]) -> str:
         "<UNTRUSTED_ANALYSIS_INPUT_JSON>\n"
         f"{compact[:24000]}\n"
         "</UNTRUSTED_ANALYSIS_INPUT_JSON>\n\n"
-        "Retorne JSON com as chaves: status, version, executive_summary, diagnosis, "
-        "content_patterns, benchmark_insights, opportunities, action_plan, truth_blocks, "
-        "source_contract. Cada recomendacao deve citar evidence e confidence. "
-        "Use listas curtas e acionaveis."
+        "Retorne JSON com as chaves: status, version, executive_summary, "
+        "comparison_matrix, evidence_highlights, diagnosis, content_patterns, "
+        "benchmark_insights, opportunities, action_plan, truth_blocks, source_contract. "
+        "A comparison_matrix deve comparar perfil conectado e referencias publicas com "
+        "metricas normalizadas quando existirem. Cada recomendacao deve citar evidence "
+        "e confidence. Use listas densas, especificas e acionaveis."
     )
+
+
+def _build_comparison_matrix(
+    *,
+    connected_profile: dict[str, Any],
+    reference_profiles: list[Any],
+) -> list[dict[str, Any]]:
+    rows = [
+        {
+            "kind": "perfil_conectado",
+            "handle": connected_profile.get("handle"),
+            "display_name": connected_profile.get("display_name"),
+            "followers_count": _int_value(connected_profile.get("followers_count")),
+            "posts_count": _int_value(connected_profile.get("posts_count")),
+            "contents_analyzed": _int_value(connected_profile.get("contents_analyzed")),
+            "top_format": connected_profile.get("best_format"),
+            "avg_interactions_per_content": _float_value(
+                connected_profile.get("avg_interactions_per_content")
+            ),
+            "engagement_rate_by_followers": _float_value(
+                connected_profile.get("engagement_rate_by_followers")
+            ),
+            "data_scope": "perfil autorizado",
+        }
+    ]
+    for raw_reference in reference_profiles[:5]:
+        reference = raw_reference if isinstance(raw_reference, dict) else {}
+        rows.append(
+            {
+                "kind": "referencia_publica",
+                "handle": reference.get("handle"),
+                "display_name": reference.get("display_name"),
+                "followers_count": _int_value(reference.get("followers_count")),
+                "posts_count": _int_value(reference.get("posts_count")),
+                "contents_analyzed": _int_value(reference.get("public_contents_count")),
+                "top_format": reference.get("top_format"),
+                "avg_interactions_per_content": _float_value(
+                    reference.get("avg_interactions_per_content")
+                ),
+                "engagement_rate_by_followers": _float_value(
+                    reference.get("avg_er_by_followers")
+                ),
+                "data_scope": "dados publicos",
+            }
+        )
+    return rows
+
+
+def _build_evidence_highlights(
+    *,
+    top_contents: list[Any],
+    reference_profiles: list[Any],
+) -> list[dict[str, Any]]:
+    highlights: list[dict[str, Any]] = []
+    for item in top_contents[:3]:
+        content = item if isinstance(item, dict) else {}
+        metrics = content.get("metrics") if isinstance(content.get("metrics"), dict) else {}
+        highlights.append(
+            {
+                "source": "perfil_conectado",
+                "handle": "perfil",
+                "title": str(content.get("title") or "Conteudo sem titulo")[:180],
+                "format": content.get("format"),
+                "url": content.get("url"),
+                "likes": _int_value(metrics.get("likes")),
+                "comments": _int_value(metrics.get("comments")),
+                "views": _int_value(metrics.get("views") or metrics.get("reach")),
+                "engagement_rate_by_followers": _float_value(
+                    content.get("engagement_rate_by_followers")
+                ),
+            }
+        )
+    for raw_reference in reference_profiles[:3]:
+        reference = raw_reference if isinstance(raw_reference, dict) else {}
+        for raw_content in (reference.get("top_contents") or [])[:2]:
+            content = raw_content if isinstance(raw_content, dict) else {}
+            metrics = content.get("metrics") if isinstance(content.get("metrics"), dict) else {}
+            highlights.append(
+                {
+                    "source": "referencia_publica",
+                    "handle": reference.get("handle"),
+                    "title": str(content.get("title") or "Conteudo sem titulo")[:180],
+                    "format": content.get("format"),
+                    "url": content.get("url"),
+                    "likes": _int_value(metrics.get("likes")),
+                    "comments": _int_value(metrics.get("comments")),
+                    "views": _int_value(metrics.get("views") or metrics.get("reach")),
+                    "engagement_rate_by_followers": _float_value(
+                        content.get("engagement_rate_by_followers")
+                    ),
+                }
+            )
+    return highlights[:8]
+
+
+def _reference_evidence_line(reference: dict[str, Any]) -> str:
+    handle = reference.get("handle") or "referencia"
+    followers = _int_value(reference.get("followers_count"))
+    contents = _int_value(reference.get("public_contents_count"))
+    avg_interactions = _float_value(reference.get("avg_interactions_per_content"))
+    avg_er = _float_value(reference.get("avg_er_by_followers"))
+    top_format = reference.get("top_format") or "formato nao definido"
+    return (
+        f"@{handle}: {followers} seguidores, {contents} posts publicos lidos, "
+        f"{avg_interactions:.2f} interacoes/post, ER seguidores {avg_er:.2f}% "
+        f"e formato dominante {top_format}."
+    )
+
+
+def _reference_recommendation(
+    reference: dict[str, Any],
+    *,
+    connected_best_format: str,
+) -> str:
+    top_format = str(reference.get("top_format") or "").strip()
+    if top_format and connected_best_format and top_format != connected_best_format:
+        return (
+            f"Testar um bloco de conteudo no formato {top_format}, mantendo o tom do "
+            "perfil conectado e medindo comentarios/post antes de escalar."
+        )
+    return (
+        "Usar a referencia para estudar abertura, prova e CTA dos posts com mais "
+        "comentarios, sem copiar tema ou promessa literalmente."
+    )
+
+
+def _top_reference_evidence(reference_profiles: list[Any]) -> str:
+    for raw_reference in reference_profiles:
+        reference = raw_reference if isinstance(raw_reference, dict) else {}
+        top_contents = reference.get("top_contents") or []
+        if not top_contents:
+            continue
+        content = top_contents[0] if isinstance(top_contents[0], dict) else {}
+        metrics = content.get("metrics") if isinstance(content.get("metrics"), dict) else {}
+        return (
+            f"@{reference.get('handle')}: post com "
+            f"{_int_value(metrics.get('likes'))} likes e "
+            f"{_int_value(metrics.get('comments'))} comentarios."
+        )
+    return "Referencias sincronizadas, mas sem top post suficiente para evidenciar padrao."
+
+
+def _int_value(value: Any) -> int:
+    try:
+        return int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _float_value(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _extract_response_text(data: dict[str, Any]) -> str:

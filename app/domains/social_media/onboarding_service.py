@@ -16,7 +16,10 @@ from app.core.rate_limit import (
     RedisFixedWindowRateLimiter,
 )
 from app.domains.jobs.job_service import JobQueueService, JobRecord
-from app.integrations.ai import make_ai_specialist_analysis_client
+from app.integrations.ai import (
+    SOCIAL_SPECIALIST_ANALYSIS_VERSION,
+    make_ai_specialist_analysis_client,
+)
 from app.integrations.apify import (
     ApifyClient,
     ApifyConfigurationError,
@@ -1016,6 +1019,7 @@ class SocialOnboardingService:
         existing = report.get("specialist_analysis")
         if (
             isinstance(existing, dict)
+            and existing.get("version") == SOCIAL_SPECIALIST_ANALYSIS_VERSION
             and existing.get("analysis_version") == analysis_version
             and existing.get("status") in {"queued", "running", "ready"}
         ):
@@ -1038,7 +1042,7 @@ class SocialOnboardingService:
         queued_at = datetime.now(UTC).isoformat()
         report["specialist_analysis"] = {
             "status": "queued",
-            "version": "social_specialist_analysis_v1",
+            "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
             "analysis_version": analysis_version,
             "queued_at": queued_at,
             "provider": None,
@@ -1235,6 +1239,7 @@ class SocialOnboardingService:
         existing = report.get("specialist_analysis")
         if (
             isinstance(existing, dict)
+            and existing.get("version") == SOCIAL_SPECIALIST_ANALYSIS_VERSION
             and existing.get("analysis_version") == analysis_version
             and existing.get("status") == "ready"
         ):
@@ -1253,7 +1258,7 @@ class SocialOnboardingService:
         running.update(
             {
                 "status": "running",
-                "version": "social_specialist_analysis_v1",
+                "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
                 "analysis_version": analysis_version,
                 "started_at": datetime.now(UTC).isoformat(),
                 "error_code": None,
@@ -1294,7 +1299,7 @@ class SocialOnboardingService:
         completed_analysis.update(
             {
                 "status": "ready",
-                "version": completed_analysis.get("version") or "social_specialist_analysis_v1",
+                "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
                 "analysis_version": analysis_version,
                 "provider": result.provider,
                 "model": result.model,
@@ -2087,7 +2092,7 @@ class SocialOnboardingService:
         report = dict(row["analysis_report"] or {})
         report["specialist_analysis"] = {
             "status": "failed",
-            "version": "social_specialist_analysis_v1",
+            "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
             "analysis_version": analysis_version,
             "error_code": error_code[:120],
             "error_message": error_message[:2000],
@@ -2164,7 +2169,10 @@ class SocialOnboardingService:
             membership_id=membership_id,
             job_type=SOCIAL_ONBOARDING_SPECIALIST_JOB,
             queue_name=SOCIAL_ONBOARDING_QUEUE,
-            idempotency_key=f"social.onboarding.specialist:{session_id}:v{analysis_version}",
+            idempotency_key=(
+                f"social.onboarding.specialist:{session_id}:v{analysis_version}:"
+                f"{SOCIAL_SPECIALIST_ANALYSIS_VERSION}"
+            ),
             payload={"session_id": session_id, "analysis_version": analysis_version},
             max_attempts=1,
             commit=commit,
@@ -2918,27 +2926,115 @@ class SocialOnboardingService:
                     AND onboarding_session_id = :session_id
                     AND status = 'active'
                 ),
-                content_counts AS (
-                  SELECT reference_profile_id, COUNT(*) AS public_contents_count
-                  FROM social_public_reference_contents
-                  WHERE reference_profile_id IN (
+                content_base AS (
+                  SELECT c.*
+                  FROM social_public_reference_contents c
+                  WHERE c.reference_profile_id IN (
                     SELECT public_reference_profile_id
                     FROM refs
                     WHERE public_reference_profile_id IS NOT NULL
                   )
+                ),
+                content_counts AS (
+                  SELECT reference_profile_id, COUNT(*) AS public_contents_count
+                  FROM content_base
+                  GROUP BY reference_profile_id
+                ),
+                content_stats AS (
+                  SELECT
+                    reference_profile_id,
+                    jsonb_build_object(
+                      'avg_likes', ROUND(AVG(COALESCE((metrics_json->>'likes')::numeric, 0)), 2),
+                      'avg_comments',
+                      ROUND(AVG(COALESCE((metrics_json->>'comments')::numeric, 0)), 2),
+                      'avg_interactions', ROUND(
+                        AVG(
+                          COALESCE((metrics_json->>'likes')::numeric, 0)
+                          + COALESCE((metrics_json->>'comments')::numeric, 0)
+                          + COALESCE((metrics_json->>'shares')::numeric, 0)
+                          + COALESCE((metrics_json->>'saves')::numeric, 0)
+                        ),
+                        2
+                      ),
+                      'avg_er_by_followers',
+                      ROUND(AVG(COALESCE(engagement_rate_by_followers, 0)), 2),
+                      'max_performance_score', ROUND(MAX(performance_score), 2)
+                    ) AS content_stats
+                  FROM content_base
+                  GROUP BY reference_profile_id
+                ),
+                format_counts AS (
+                  SELECT reference_profile_id, content_format, COUNT(*) AS format_count
+                  FROM content_base
+                  GROUP BY reference_profile_id, content_format
+                ),
+                format_rollups AS (
+                  SELECT
+                    reference_profile_id,
+                    jsonb_object_agg(content_format, format_count ORDER BY format_count DESC)
+                      AS format_distribution
+                  FROM format_counts
+                  GROUP BY reference_profile_id
+                ),
+                ranked_contents AS (
+                  SELECT
+                    c.*,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY c.reference_profile_id
+                      ORDER BY c.performance_score DESC NULLS LAST,
+                               c.published_at DESC NULLS LAST,
+                               c.id ASC
+                    ) AS rank
+                  FROM content_base c
+                ),
+                top_public_contents AS (
+                  SELECT
+                    reference_profile_id,
+                    jsonb_agg(
+                      jsonb_build_object(
+                        'external_id', external_id,
+                        'format', content_format,
+                        'type', content_type,
+                        'title', title,
+                        'url', content_url,
+                        'published_at', published_at,
+                        'metrics', metrics_json,
+                        'engagement_rate_by_followers', engagement_rate_by_followers,
+                        'performance_score', performance_score
+                      )
+                      ORDER BY performance_score DESC NULLS LAST,
+                               published_at DESC NULLS LAST
+                    ) AS top_public_contents
+                  FROM ranked_contents
+                  WHERE rank <= 5
                   GROUP BY reference_profile_id
                 )
                 SELECT
                   refs.*,
                   public_refs.sync_status AS global_sync_status,
+                  public_refs.source AS global_source,
+                  public_refs.display_name AS global_display_name,
+                  public_refs.profile_url AS global_profile_url,
+                  public_refs.profile_snapshot AS public_profile_snapshot,
                   public_refs.last_synced_at AS global_last_synced_at,
                   public_refs.data_truth AS data_truth,
-                  COALESCE(content_counts.public_contents_count, 0) AS public_contents_count
+                  COALESCE(content_counts.public_contents_count, 0) AS public_contents_count,
+                  COALESCE(content_stats.content_stats, '{}'::jsonb) AS public_content_stats,
+                  COALESCE(format_rollups.format_distribution, '{}'::jsonb)
+                    AS public_format_distribution,
+                  COALESCE(top_public_contents.top_public_contents, '[]'::jsonb)
+                    AS top_public_contents
                 FROM refs
                 LEFT JOIN social_public_reference_profiles AS public_refs
                   ON public_refs.id = refs.public_reference_profile_id
                 LEFT JOIN content_counts
                   ON content_counts.reference_profile_id = refs.public_reference_profile_id
+                LEFT JOIN content_stats
+                  ON content_stats.reference_profile_id = refs.public_reference_profile_id
+                LEFT JOIN format_rollups
+                  ON format_rollups.reference_profile_id = refs.public_reference_profile_id
+                LEFT JOIN top_public_contents
+                  ON top_public_contents.reference_profile_id = refs.public_reference_profile_id
                 ORDER BY refs.created_at ASC, refs.id ASC
                 """
             ),
@@ -3361,6 +3457,21 @@ def _int_value(value: Any) -> int:
         return 0
 
 
+def _float_value(value: Any) -> float:
+    try:
+        return round(float(value or 0), 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _dict_value(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _list_value(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     if not value:
         return None
@@ -3383,6 +3494,84 @@ def _top_count_key(values: dict[str, int]) -> str | None:
     if not values:
         return None
     return max(values.items(), key=lambda item: item[1])[0]
+
+
+def _top_numeric_key(values: dict[str, Any]) -> str | None:
+    normalized = {str(key): _float_value(value) for key, value in values.items()}
+    normalized = {key: value for key, value in normalized.items() if value > 0}
+    if not normalized:
+        return None
+    return max(normalized.items(), key=lambda item: item[1])[0]
+
+
+def _content_metric(metrics: dict[str, Any], key: str) -> float:
+    return _float_value(metrics.get(key))
+
+
+def _compact_connected_contents(
+    contents: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for item in contents[:limit]:
+        metrics = _dict_value(item.get("metrics"))
+        compacted.append(
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "type": item.get("type"),
+                "format": item.get("format"),
+                "published_at": item.get("published_at"),
+                "metrics": {
+                    "likes": _content_metric(metrics, "likes"),
+                    "comments": _content_metric(metrics, "comments"),
+                    "shares": _content_metric(metrics, "shares"),
+                    "saves": _content_metric(metrics, "saves"),
+                    "views": _content_metric(metrics, "views"),
+                    "reach": _content_metric(metrics, "reach"),
+                },
+                "engagement_rate_by_followers": _float_value(
+                    item.get("engagement_rate_by_followers")
+                ),
+                "engagement_rate_by_reach": _float_value(item.get("engagement_rate_by_reach")),
+                "performance_score": _float_value(item.get("performance_score")),
+            }
+        )
+    return compacted
+
+
+def _compact_public_contents(
+    contents: list[Any],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    compacted: list[dict[str, Any]] = []
+    for raw_item in contents[:limit]:
+        item = _dict_value(raw_item)
+        metrics = _dict_value(item.get("metrics"))
+        compacted.append(
+            {
+                "title": item.get("title"),
+                "url": item.get("url"),
+                "type": item.get("type"),
+                "format": item.get("format"),
+                "published_at": str(item.get("published_at")) if item.get("published_at") else None,
+                "metrics": {
+                    "likes": _content_metric(metrics, "likes"),
+                    "comments": _content_metric(metrics, "comments"),
+                    "shares": _content_metric(metrics, "shares"),
+                    "saves": _content_metric(metrics, "saves"),
+                    "views": _content_metric(metrics, "views"),
+                    "reach": _content_metric(metrics, "reach"),
+                },
+                "engagement_rate_by_followers": _float_value(
+                    item.get("engagement_rate_by_followers")
+                ),
+                "performance_score": _float_value(item.get("performance_score")),
+            }
+        )
+    return compacted
 
 
 def _manual_reference_truth() -> dict[str, Any]:
@@ -3610,6 +3799,9 @@ def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]
         if public_contents_count:
             references_with_public_data += 1
             public_contents_total += public_contents_count
+        profile_snapshot = _dict_value(reference.get("public_profile_snapshot"))
+        content_stats = _dict_value(reference.get("public_content_stats"))
+        format_distribution = _dict_value(reference.get("public_format_distribution"))
         declared.append(
             {
                 "id": str(reference.get("id")),
@@ -3623,6 +3815,30 @@ def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]
                 "label": reference.get("label"),
                 "sync_status": sync_status,
                 "public_contents_count": public_contents_count,
+                "source": reference.get("global_source") or profile_snapshot.get("source"),
+                "display_name": (
+                    reference.get("global_display_name")
+                    or profile_snapshot.get("display_name")
+                    or reference.get("label")
+                ),
+                "followers_count": _int_value(profile_snapshot.get("followers_count")),
+                "posts_count": _int_value(profile_snapshot.get("posts_count")),
+                "format_distribution": format_distribution,
+                "content_stats": {
+                    "avg_likes": _float_value(content_stats.get("avg_likes")),
+                    "avg_comments": _float_value(content_stats.get("avg_comments")),
+                    "avg_interactions": _float_value(content_stats.get("avg_interactions")),
+                    "avg_er_by_followers": _float_value(
+                        content_stats.get("avg_er_by_followers")
+                    ),
+                    "max_performance_score": _float_value(
+                        content_stats.get("max_performance_score")
+                    ),
+                },
+                "top_contents": _compact_public_contents(
+                    _list_value(reference.get("top_public_contents")),
+                    limit=3,
+                ),
             }
         )
 
@@ -3663,6 +3879,189 @@ def _build_reference_context(references: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def _build_competitive_benchmark(
+    *,
+    snapshot: dict[str, Any],
+    content_metrics: dict[str, Any],
+    top_contents: list[dict[str, Any]],
+    references: list[dict[str, Any]],
+    reference_context: dict[str, Any],
+) -> dict[str, Any]:
+    connected_followers = _int_value(snapshot.get("followers_count"))
+    connected_contents = _int_value(snapshot.get("content_items_count"))
+    connected_interactions = _float_value(content_metrics.get("interactions"))
+    connected_avg_interactions = (
+        round(connected_interactions / connected_contents, 2) if connected_contents else 0.0
+    )
+    connected_best_format = str(content_metrics.get("best_format") or "")
+    connected = {
+        "handle": snapshot.get("handle"),
+        "display_name": snapshot.get("display_name"),
+        "followers_count": connected_followers,
+        "posts_count": _int_value(snapshot.get("posts_count")),
+        "contents_analyzed": connected_contents,
+        "best_format": connected_best_format or None,
+        "avg_interactions_per_content": connected_avg_interactions,
+        "engagement_rate_by_followers": _float_value(
+            content_metrics.get("engagement_rate_by_followers")
+        ),
+        "engagement_rate_by_reach": _float_value(
+            content_metrics.get("engagement_rate_by_reach")
+        ),
+        "top_contents": _compact_connected_contents(top_contents, limit=5),
+    }
+
+    reference_profiles: list[dict[str, Any]] = []
+    for reference in references:
+        profile_snapshot = _dict_value(reference.get("public_profile_snapshot"))
+        content_stats = _dict_value(reference.get("public_content_stats"))
+        format_distribution = _dict_value(reference.get("public_format_distribution"))
+        top_public_contents = _compact_public_contents(
+            _list_value(reference.get("top_public_contents")),
+            limit=5,
+        )
+        public_contents_count = _int_value(reference.get("public_contents_count"))
+        if not public_contents_count:
+            continue
+        followers_count = _int_value(profile_snapshot.get("followers_count"))
+        avg_interactions = _float_value(content_stats.get("avg_interactions"))
+        avg_er_followers = _float_value(content_stats.get("avg_er_by_followers"))
+        top_format = _top_numeric_key(format_distribution)
+        reference_profiles.append(
+            {
+                "handle": reference.get("handle"),
+                "display_name": (
+                    reference.get("global_display_name")
+                    or profile_snapshot.get("display_name")
+                    or reference.get("label")
+                ),
+                "source": reference.get("global_source") or profile_snapshot.get("source"),
+                "sync_status": (
+                    reference.get("global_sync_status")
+                    or reference.get("sync_status")
+                    or "manual_pending"
+                ),
+                "followers_count": followers_count,
+                "posts_count": _int_value(profile_snapshot.get("posts_count")),
+                "public_contents_count": public_contents_count,
+                "format_distribution": format_distribution,
+                "top_format": top_format,
+                "avg_likes": _float_value(content_stats.get("avg_likes")),
+                "avg_comments": _float_value(content_stats.get("avg_comments")),
+                "avg_interactions_per_content": avg_interactions,
+                "avg_er_by_followers": avg_er_followers,
+                "scale_vs_connected_followers": (
+                    round(followers_count / connected_followers, 1)
+                    if followers_count and connected_followers
+                    else None
+                ),
+                "interactions_gap_vs_connected": (
+                    round(avg_interactions - connected_avg_interactions, 2)
+                    if avg_interactions or connected_avg_interactions
+                    else None
+                ),
+                "top_contents": top_public_contents,
+            }
+        )
+
+    reference_avg_interactions = (
+        round(
+            sum(_float_value(ref.get("avg_interactions_per_content")) for ref in reference_profiles)
+            / len(reference_profiles),
+            2,
+        )
+        if reference_profiles
+        else 0.0
+    )
+    reference_avg_er_followers = (
+        round(
+            sum(_float_value(ref.get("avg_er_by_followers")) for ref in reference_profiles)
+            / len(reference_profiles),
+            2,
+        )
+        if reference_profiles
+        else 0.0
+    )
+    dominant_reference_formats: dict[str, int] = {}
+    for ref in reference_profiles:
+        top_format = str(ref.get("top_format") or "").strip()
+        if top_format:
+            dominant_reference_formats[top_format] = (
+                dominant_reference_formats.get(top_format, 0) + 1
+            )
+    dominant_reference_format = _top_count_key(dominant_reference_formats)
+
+    findings: list[dict[str, Any]] = []
+    if reference_profiles:
+        findings.append(
+            {
+                "title": "Base real de benchmark",
+                "finding": (
+                    f"{len(reference_profiles)} referencias sincronizadas com "
+                    f"{reference_context.get('public_contents_total', 0)} posts publicos."
+                ),
+                "evidence": ", ".join(
+                    f"@{ref['handle']} ({ref['public_contents_count']} posts)"
+                    for ref in reference_profiles[:5]
+                ),
+                "confidence": "high",
+            }
+        )
+        if connected_avg_interactions or reference_avg_interactions:
+            delta = round(reference_avg_interactions - connected_avg_interactions, 2)
+            findings.append(
+                {
+                    "title": "Diferenca de interacoes medias por post",
+                    "finding": (
+                        f"Perfil conectado: {connected_avg_interactions:.2f}; "
+                        f"referencias: {reference_avg_interactions:.2f}; delta: {delta:.2f}."
+                    ),
+                    "evidence": (
+                        "Calculo normalizado por post para evitar comparar apenas volume bruto."
+                    ),
+                    "confidence": "medium",
+                }
+            )
+        if dominant_reference_format:
+            findings.append(
+                {
+                    "title": "Formato dominante nas referencias",
+                    "finding": (
+                        f"Formato mais frequente entre referencias: {dominant_reference_format}; "
+                        f"perfil conectado: {connected_best_format or 'nao definido'}."
+                    ),
+                    "evidence": "Distribuicao de formatos dos posts publicos sincronizados.",
+                    "confidence": "medium",
+                }
+            )
+
+    return {
+        "version": "competitive_benchmark_v1",
+        "method": (
+            "Compara apenas dados publicos sincronizados e dados conectados autorizados. "
+            "Volume bruto e normalizado por seguidores/post para reduzir vies de escala."
+        ),
+        "connected_profile": connected,
+        "reference_profiles": reference_profiles,
+        "aggregate": {
+            "references_with_data": len(reference_profiles),
+            "public_contents_total": int(reference_context.get("public_contents_total") or 0),
+            "reference_avg_interactions_per_content": reference_avg_interactions,
+            "reference_avg_er_by_followers": reference_avg_er_followers,
+            "dominant_reference_format": dominant_reference_format,
+        },
+        "findings": findings,
+        "truth_limits": [
+            "Referencias publicas nao retornam demografia privada.",
+            (
+                "Apify retorna likes e comentarios publicos; saves, shares e reach podem "
+                "estar ausentes."
+            ),
+            "Comparacoes de performance usam taxas e medias, nao apenas tamanho do perfil.",
+        ],
+    }
+
+
 def _build_specialist_brief(
     *,
     snapshot: dict[str, Any],
@@ -3670,6 +4069,7 @@ def _build_specialist_brief(
     top_contents: list[dict[str, Any]],
     segment: dict[str, Any],
     reference_context: dict[str, Any],
+    competitive_benchmark: dict[str, Any],
 ) -> dict[str, Any]:
     contents_analyzed = int(snapshot.get("content_items_count") or 0)
     has_profile_facts = bool(snapshot.get("followers_count") or snapshot.get("bio"))
@@ -3717,6 +4117,17 @@ def _build_specialist_brief(
                 "declared_count": reference_context["declared_count"],
                 "synced_count": reference_context["references_with_public_data"],
                 "public_contents_total": reference_context["public_contents_total"],
+            },
+            "competitive_benchmark": {
+                "references_with_data": competitive_benchmark["aggregate"][
+                    "references_with_data"
+                ],
+                "reference_avg_interactions_per_content": competitive_benchmark[
+                    "aggregate"
+                ]["reference_avg_interactions_per_content"],
+                "dominant_reference_format": competitive_benchmark["aggregate"][
+                    "dominant_reference_format"
+                ],
             },
         },
         "guardrails": [
@@ -3829,6 +4240,13 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
     )
     engagement_score = min(100, 38 + int(effective_engagement * 7) + min(contents_analyzed * 3, 18))
     top_content_lines = _top_content_lines(top_contents)
+    competitive_benchmark = _build_competitive_benchmark(
+        snapshot=snapshot,
+        content_metrics=content_metrics,
+        top_contents=top_contents,
+        references=references,
+        reference_context=reference_context,
+    )
     truth = _build_truth_sections(
         snapshot=snapshot,
         content_metrics=content_metrics,
@@ -3849,6 +4267,7 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         top_contents=top_contents,
         segment=segment,
         reference_context=reference_context,
+        competitive_benchmark=competitive_benchmark,
     )
 
     return {
@@ -3892,6 +4311,7 @@ def _build_report(session: dict[str, Any], references: list[dict[str, Any]]) -> 
         "content_metrics": content_metrics,
         "top_contents": top_contents,
         "reference_context": reference_context,
+        "competitive_benchmark": competitive_benchmark,
         "specialist_brief": specialist_brief,
         "audience": {
             "summary": (
