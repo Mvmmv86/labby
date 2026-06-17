@@ -2963,6 +2963,7 @@ class SocialOnboardingService:
         return dict(row)
 
     def _with_references(self, row: dict[str, Any]) -> dict[str, Any]:
+        row["analysis_report"] = _without_stale_specialist_analysis(row.get("analysis_report"))
         row["references"] = self._list_references(
             tenant_id=str(row["tenant_id"]),
             session_id=str(row["id"]),
@@ -3156,6 +3157,27 @@ def _normalize_provider(provider: str) -> str:
 
 def _normalize_handle(handle: str) -> str:
     return handle.strip().lstrip("@").lower()
+
+
+def _without_stale_specialist_analysis(report: Any) -> Any:
+    if not isinstance(report, dict):
+        return report
+
+    specialist = report.get("specialist_analysis")
+    if not isinstance(specialist, dict):
+        return report
+
+    if specialist.get("version") == SOCIAL_SPECIALIST_ANALYSIS_VERSION:
+        return report
+
+    clean_report = dict(report)
+    clean_report.pop("specialist_analysis", None)
+    clean_report["specialist_analysis_stale"] = {
+        "previous_version": specialist.get("version"),
+        "status": specialist.get("status"),
+        "reason": "contract_version_changed",
+    }
+    return clean_report
 
 
 def _has_connected_profile(row: dict[str, Any]) -> bool:

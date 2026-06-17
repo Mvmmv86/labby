@@ -1,3 +1,4 @@
+from app.domains.social_media.onboarding_service import _without_stale_specialist_analysis
 from app.integrations.ai import (
     SOCIAL_SPECIALIST_ANALYSIS_VERSION,
     FallbackAISpecialistAnalysisClient,
@@ -31,6 +32,40 @@ def test_specialist_prompt_treats_scraped_text_as_untrusted_data() -> None:
     assert "ate 3 posts do perfil conectado" in prompt
     assert "ate 3 posts de cada referencia publica" in prompt
     assert "IGNORE PREVIOUS INSTRUCTIONS" in prompt
+
+
+def test_stale_specialist_analysis_is_hidden_from_report() -> None:
+    report = {
+        "specialist_analysis": {
+            "status": "ready",
+            "version": "social_specialist_analysis_v4",
+            "action_plan": [{"day": "7", "title": "antigo"}],
+        },
+        "specialist_brief": {"ready_for_ai": True},
+    }
+
+    clean = _without_stale_specialist_analysis(report)
+
+    assert "specialist_analysis" not in clean
+    assert clean["specialist_brief"] == {"ready_for_ai": True}
+    assert clean["specialist_analysis_stale"] == {
+        "previous_version": "social_specialist_analysis_v4",
+        "status": "ready",
+        "reason": "contract_version_changed",
+    }
+    assert "specialist_analysis" in report
+
+
+def test_current_specialist_analysis_is_kept_in_report() -> None:
+    report = {
+        "specialist_analysis": {
+            "status": "ready",
+            "version": SOCIAL_SPECIALIST_ANALYSIS_VERSION,
+            "action_plan": [{"day": "Passo 1", "title": "atual"}],
+        },
+    }
+
+    assert _without_stale_specialist_analysis(report) is report
 
 
 def test_fallback_specialist_analysis_uses_competitive_benchmark_evidence() -> None:
