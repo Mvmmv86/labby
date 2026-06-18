@@ -13,14 +13,17 @@ from app.domains.social_media import onboarding_jobs, onboarding_service
 from app.domains.social_media.onboarding_service import SocialOnboardingService
 from app.integrations.phyllo import PhylloProviderError
 from tests.test_sales_contacts_integration import TENANT_1, current_one, current_two
-from tests.test_sales_contacts_integration import (
-    db_session as _db_session_fixture,  # noqa: F401
-)
-from tests.test_sales_contacts_integration import (
-    migrated_engine as _migrated_engine_fixture,  # noqa: F401
-)
 
 pytestmark = pytest.mark.integration
+pytest_plugins = ("tests.test_sales_contacts_integration",)
+
+
+@pytest.fixture(autouse=True)
+def clean_social_global_tables(db_session: Session) -> None:
+    db_session.execute(
+        text("TRUNCATE social_public_reference_profiles RESTART IDENTITY CASCADE")
+    )
+    db_session.commit()
 
 
 def make_service(db_session: Session) -> SocialOnboardingService:
@@ -258,7 +261,6 @@ class FakeRateLimiter:
         )
         return RateLimitDecision(
             allowed=self.allowed,
-            limit=limit,
             current=1 if self.allowed else limit + 1,
             retry_after_seconds=3600,
         )
@@ -371,7 +373,7 @@ def test_social_onboarding_rediagnose_uses_new_job_version_real_postgres(
             """
         ),
         {"tenant_id": TENANT_1},
-    ).mappings().one()
+    ).scalar_one()
     assert job_count == 2
 
 
@@ -1497,17 +1499,22 @@ def test_social_onboarding_public_reference_diagnostic_debounce(
     ).scalar_one()
     assert diagnosis_jobs == 2
 
-    queued, specialist_job = service.enqueue_specialist_analysis(
+    queued, diagnostic_job = service.enqueue_diagnostic(
         current=current_one(),
         session_id=str(session["id"]),
     )
 
-    assert specialist_job.job_type == "social.onboarding.specialist_analysis"
+    assert diagnostic_job.job_type == "social.onboarding.diagnose"
     assert queued["analysis_version"] == 3
-    assert queued["analysis_report"]["reference_context"]["references_with_public_data"] == 2
-    assert queued["analysis_report"]["reference_context"]["public_contents_total"] == 4
-    assert len(queued["analysis_report"]["competitive_benchmark"]["reference_profiles"]) == 2
-    assert queued["analysis_report"]["specialist_analysis"]["analysis_version"] == 3
+    service.run_diagnostic(
+        tenant_id=str(TENANT_1),
+        session_id=str(session["id"]),
+        analysis_version=3,
+    )
+    refreshed = service.get_session(current=current_one(), session_id=str(session["id"]))
+    assert refreshed["analysis_report"]["reference_context"]["references_with_public_data"] == 2
+    assert refreshed["analysis_report"]["reference_context"]["public_contents_total"] == 4
+    assert len(refreshed["analysis_report"]["competitive_benchmark"]["reference_profiles"]) == 2
 
 
 def test_social_onboarding_report_marks_manual_references_as_unsynced(
@@ -1608,6 +1615,7 @@ def test_social_onboarding_phyllo_complete_rejects_cross_tenant_user(
     session_one = service.create_session(current=current_one(), objective="grow_audience")
     session_two = service.create_session(current=current_two(), objective="grow_audience")
     service.create_phyllo_connect_token(current=current_one(), session_id=str(session_one["id"]))
+    service.create_phyllo_connect_token(current=current_two(), session_id=str(session_two["id"]))
 
     with pytest.raises(HTTPException) as exc:
         service.complete_phyllo_connection(
@@ -1705,7 +1713,13 @@ def test_social_onboarding_reconciles_phyllo_connecting_session(
     db_session: Session,
 ) -> None:
     phyllo = FakePhylloClient()
-    phyllo.accounts_by_user_id["phyllo-user-1"] = [{"id": "phyllo-account-recovered"}]
+    phyllo.accounts_by_user_id["phyllo-user-1"] = [
+        {
+            "id": "phyllo-account-recovered",
+            "status": "connected",
+            "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        }
+    ]
     phyllo.accounts_by_id["phyllo-account-recovered"] = {
         "id": "phyllo-account-recovered",
         "user": {"id": "phyllo-user-1"},
@@ -1749,7 +1763,13 @@ def test_social_onboarding_reconciler_isolates_candidate_phyllo_failures(
     service.create_phyllo_connect_token(current=current_one(), session_id=str(first["id"]))
     service.create_phyllo_connect_token(current=current_two(), session_id=str(second["id"]))
     phyllo.list_accounts_errors.add("phyllo-user-1")
-    phyllo.accounts_by_user_id["phyllo-user-2"] = [{"id": "phyllo-account-second"}]
+    phyllo.accounts_by_user_id["phyllo-user-2"] = [
+        {
+            "id": "phyllo-account-second",
+            "status": "connected",
+            "work_platform_id": "9bb8913b-ddd9-430b-a66a-d74d846e6c66",
+        }
+    ]
     phyllo.accounts_by_id["phyllo-account-second"] = {
         "id": "phyllo-account-second",
         "user": {"id": "phyllo-user-2"},

@@ -3690,7 +3690,19 @@ def _phyllo_work_platform_id(account: dict[str, Any]) -> str | None:
 
 def _unwrap_data(payload: dict[str, Any]) -> dict[str, Any]:
     data = payload.get("data")
-    if isinstance(data, dict):
+    if isinstance(data, dict) and not any(
+        key in payload
+        for key in (
+            "id",
+            "user",
+            "account",
+            "work_platform_id",
+            "platform_id",
+            "platform_username",
+            "username",
+            "handle",
+        )
+    ):
         return data
     return payload
 
