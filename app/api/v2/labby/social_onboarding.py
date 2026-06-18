@@ -8,6 +8,11 @@ from app.core.dependencies import CurrentMembership, require_module
 from app.domains.jobs.job_service import JobQueueService, JobRecord
 from app.domains.social_media.onboarding_service import SocialOnboardingService
 from app.schemas.social_onboarding import (
+    SocialActionPlanItemPatch,
+    SocialActionPlanItemResponse,
+    SocialActionPlanResponse,
+    SocialCalendarEntryPatch,
+    SocialCalendarEntryResponse,
     SocialOnboardingCurrentResponse,
     SocialOnboardingFakeConnectRequest,
     SocialOnboardingJobResponse,
@@ -215,6 +220,72 @@ def enqueue_specialist_analysis(
     )
 
 
+@router.get(
+    "/sessions/{session_id}/action-plan",
+    response_model=SocialActionPlanResponse,
+)
+def get_action_plan(
+    session_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialActionPlanResponse:
+    return _action_plan_response(
+        service.get_action_plan(current=current, session_id=str(session_id)),
+    )
+
+
+@router.post(
+    "/sessions/{session_id}/action-plan/generate",
+    response_model=SocialActionPlanResponse,
+)
+def generate_action_plan(
+    session_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialActionPlanResponse:
+    return _action_plan_response(
+        service.generate_action_plan(current=current, session_id=str(session_id)),
+    )
+
+
+@router.patch(
+    "/action-plan/items/{item_id}",
+    response_model=SocialActionPlanResponse,
+)
+def update_action_plan_item(
+    item_id: UUID,
+    data: SocialActionPlanItemPatch,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialActionPlanResponse:
+    return _action_plan_response(
+        service.update_action_plan_item(
+            current=current,
+            item_id=str(item_id),
+            patch=data.model_dump(exclude_unset=True),
+        )
+    )
+
+
+@router.patch(
+    "/action-plan/calendar/{entry_id}",
+    response_model=SocialActionPlanResponse,
+)
+def update_calendar_entry(
+    entry_id: UUID,
+    data: SocialCalendarEntryPatch,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialActionPlanResponse:
+    return _action_plan_response(
+        service.update_calendar_entry(
+            current=current,
+            entry_id=str(entry_id),
+            patch=data.model_dump(exclude_unset=True),
+        )
+    )
+
+
 def _session_response(row: dict) -> SocialOnboardingSessionResponse:
     return SocialOnboardingSessionResponse(
         id=row["id"],
@@ -257,6 +328,71 @@ def _reference_response(row: dict) -> SocialReferenceProfileResponse:
         data_truth=row.get("data_truth"),
         comparison_summary=row.get("comparison_summary"),
         created_at=row["created_at"],
+    )
+
+
+def _action_plan_response(row: dict) -> SocialActionPlanResponse:
+    return SocialActionPlanResponse(
+        id=row["id"],
+        tenant_id=row["tenant_id"],
+        onboarding_session_id=row["onboarding_session_id"],
+        title=row["title"],
+        summary=row.get("summary"),
+        status=row["status"],
+        source_analysis_version=row["source_analysis_version"],
+        source_specialist_version=row.get("source_specialist_version"),
+        plan_version=row["plan_version"],
+        metadata_json=row.get("metadata_json"),
+        items=[_action_item_response(item) for item in row.get("items", [])],
+        calendar_entries=[
+            _calendar_entry_response(entry) for entry in row.get("calendar_entries", [])
+        ],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _action_item_response(row: dict) -> SocialActionPlanItemResponse:
+    return SocialActionPlanItemResponse(
+        id=row["id"],
+        position=row["position"],
+        title=row["title"],
+        description=row["description"],
+        why_it_matters=row.get("why_it_matters"),
+        how_to_execute=row.get("how_to_execute"),
+        expected_signal=row.get("expected_signal"),
+        measurement=row.get("measurement"),
+        evidence=row.get("evidence"),
+        priority=row["priority"],
+        status=row["status"],
+        source_json=row.get("source_json"),
+        notes=row.get("notes"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _calendar_entry_response(row: dict) -> SocialCalendarEntryResponse:
+    return SocialCalendarEntryResponse(
+        id=row["id"],
+        action_item_id=row.get("action_item_id"),
+        scheduled_at=row["scheduled_at"],
+        day_index=row["day_index"],
+        title=row["title"],
+        format=row["format"],
+        channel=row["channel"],
+        status=row["status"],
+        theme=row.get("theme"),
+        hook=row.get("hook"),
+        caption_outline=row.get("caption_outline"),
+        cta=row.get("cta"),
+        evidence=row.get("evidence"),
+        objective=row.get("objective"),
+        source_reference_handle=row.get("source_reference_handle"),
+        metrics_goal_json=row.get("metrics_goal_json"),
+        metadata_json=row.get("metadata_json"),
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
     )
 
 

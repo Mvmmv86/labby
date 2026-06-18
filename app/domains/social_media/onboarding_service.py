@@ -1091,6 +1091,379 @@ class SocialOnboardingService:
         self.db.commit()
         return self._with_references(dict(row)), job
 
+    def get_action_plan(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+    ) -> dict[str, Any]:
+        plan = self._get_active_action_plan(
+            tenant_id=str(current.tenant_id),
+            session_id=session_id,
+        )
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plano de acao social nao encontrado")
+        return plan
+
+    def generate_action_plan(
+        self,
+        *,
+        current: CurrentMembership,
+        session_id: str,
+    ) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_onboarding_sessions
+                WHERE tenant_id = :tenant_id
+                  AND id = :session_id
+                  AND status = 'ready'
+                  AND status <> 'archived'
+                FOR UPDATE
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "session_id": session_id},
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Diagnostico pronto nao encontrado")
+
+        session = self._with_references(dict(row))
+        report = dict(session.get("analysis_report") or {})
+        specialist_analysis = _ready_specialist_analysis(report, session=session)
+        if specialist_analysis is None:
+            raise HTTPException(
+                status_code=409,
+                detail="Gere a analise especialista antes de criar o plano de acao",
+            )
+
+        plan_payload = _build_social_action_plan_payload(session=session, report=report)
+        items = _normalize_social_action_items(
+            specialist_analysis=specialist_analysis,
+            report=report,
+        )
+        calendar_entries = _build_social_calendar_entries(
+            items=items,
+            report=report,
+            session=session,
+        )
+
+        self.db.execute(
+            text(
+                """
+                UPDATE social_action_plans
+                SET status = 'archived',
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND onboarding_session_id = :session_id
+                  AND status = 'active'
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "membership_id": str(current.membership_id),
+            },
+        )
+        plan_row = self.db.execute(
+            text(
+                """
+                INSERT INTO social_action_plans (
+                  tenant_id,
+                  onboarding_session_id,
+                  created_by_membership_id,
+                  updated_by_membership_id,
+                  title,
+                  summary,
+                  source_analysis_version,
+                  source_specialist_version,
+                  metadata_json
+                )
+                VALUES (
+                  :tenant_id,
+                  :session_id,
+                  :membership_id,
+                  :membership_id,
+                  :title,
+                  :summary,
+                  :source_analysis_version,
+                  :source_specialist_version,
+                  CAST(:metadata_json AS jsonb)
+                )
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "session_id": session_id,
+                "membership_id": str(current.membership_id),
+                "title": plan_payload["title"],
+                "summary": plan_payload["summary"],
+                "source_analysis_version": _int_value(session.get("analysis_version")),
+                "source_specialist_version": specialist_analysis.get("version"),
+                "metadata_json": json.dumps(plan_payload["metadata"]),
+            },
+        ).mappings().first()
+        if plan_row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=500, detail="Nao foi possivel criar o plano")
+        plan_id = str(plan_row["id"])
+
+        self.db.execute(
+            text(
+                """
+                INSERT INTO social_action_plan_items (
+                  tenant_id,
+                  action_plan_id,
+                  onboarding_session_id,
+                  position,
+                  title,
+                  description,
+                  why_it_matters,
+                  how_to_execute,
+                  expected_signal,
+                  measurement,
+                  evidence,
+                  priority,
+                  status,
+                  source_json
+                )
+                VALUES (
+                  :tenant_id,
+                  :action_plan_id,
+                  :session_id,
+                  :position,
+                  :title,
+                  :description,
+                  :why_it_matters,
+                  :how_to_execute,
+                  :expected_signal,
+                  :measurement,
+                  :evidence,
+                  :priority,
+                  'pending',
+                  CAST(:source_json AS jsonb)
+                )
+                """
+            ),
+            [
+                {
+                    "tenant_id": str(current.tenant_id),
+                    "action_plan_id": plan_id,
+                    "session_id": session_id,
+                    "position": index + 1,
+                    "title": item["title"],
+                    "description": item["description"],
+                    "why_it_matters": item["why_it_matters"],
+                    "how_to_execute": item["how_to_execute"],
+                    "expected_signal": item["expected_signal"],
+                    "measurement": item["measurement"],
+                    "evidence": item["evidence"],
+                    "priority": item["priority"],
+                    "source_json": json.dumps(item["source"]),
+                }
+                for index, item in enumerate(items)
+            ],
+        )
+        inserted_items = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_action_plan_items
+                WHERE tenant_id = :tenant_id
+                  AND action_plan_id = :action_plan_id
+                ORDER BY position ASC, id ASC
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "action_plan_id": plan_id},
+        ).mappings().all()
+        item_by_position = {int(item["position"]): str(item["id"]) for item in inserted_items}
+
+        self.db.execute(
+            text(
+                """
+                INSERT INTO social_content_calendar_entries (
+                  tenant_id,
+                  action_plan_id,
+                  action_item_id,
+                  onboarding_session_id,
+                  scheduled_at,
+                  day_index,
+                  title,
+                  format,
+                  channel,
+                  status,
+                  theme,
+                  hook,
+                  caption_outline,
+                  cta,
+                  evidence,
+                  objective,
+                  source_reference_handle,
+                  metrics_goal_json,
+                  metadata_json
+                )
+                VALUES (
+                  :tenant_id,
+                  :action_plan_id,
+                  :action_item_id,
+                  :session_id,
+                  :scheduled_at,
+                  :day_index,
+                  :title,
+                  :format,
+                  :channel,
+                  'planned',
+                  :theme,
+                  :hook,
+                  :caption_outline,
+                  :cta,
+                  :evidence,
+                  :objective,
+                  :source_reference_handle,
+                  CAST(:metrics_goal_json AS jsonb),
+                  CAST(:metadata_json AS jsonb)
+                )
+                """
+            ),
+            [
+                {
+                    "tenant_id": str(current.tenant_id),
+                    "action_plan_id": plan_id,
+                    "action_item_id": item_by_position.get(
+                        _int_value(entry.get("action_position"))
+                    ),
+                    "session_id": session_id,
+                    "scheduled_at": entry["scheduled_at"],
+                    "day_index": entry["day_index"],
+                    "title": entry["title"],
+                    "format": entry["format"],
+                    "channel": entry["channel"],
+                    "theme": entry["theme"],
+                    "hook": entry["hook"],
+                    "caption_outline": entry["caption_outline"],
+                    "cta": entry["cta"],
+                    "evidence": entry["evidence"],
+                    "objective": entry["objective"],
+                    "source_reference_handle": entry.get("source_reference_handle"),
+                    "metrics_goal_json": json.dumps(entry["metrics_goal"]),
+                    "metadata_json": json.dumps(entry["metadata"]),
+                }
+                for entry in calendar_entries
+            ],
+        )
+        self.db.commit()
+        plan = self._get_active_action_plan(
+            tenant_id=str(current.tenant_id),
+            session_id=session_id,
+        )
+        if plan is None:
+            raise HTTPException(status_code=500, detail="Plano de acao social nao encontrado")
+        return plan
+
+    def update_action_plan_item(
+        self,
+        *,
+        current: CurrentMembership,
+        item_id: str,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        allowed = {"pending", "in_progress", "approved", "sent_to_calendar", "done", "archived"}
+        updates = {key: value for key, value in patch.items() if value is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nenhuma alteracao informada")
+        status = updates.get("status")
+        if status is not None and status not in allowed:
+            raise HTTPException(status_code=422, detail="Status do item invalido")
+
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_action_plan_items AS item
+                SET status = COALESCE(:status, item.status),
+                    notes = COALESCE(:notes, item.notes),
+                    updated_at = NOW()
+                FROM social_action_plans AS plan
+                WHERE item.action_plan_id = plan.id
+                  AND item.tenant_id = :tenant_id
+                  AND item.id = :item_id
+                  AND plan.status = 'active'
+                RETURNING item.onboarding_session_id
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "item_id": item_id,
+                "status": status,
+                "notes": updates.get("notes"),
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Item do plano nao encontrado")
+        self.db.commit()
+        plan = self._get_active_action_plan(
+            tenant_id=str(current.tenant_id),
+            session_id=str(row["onboarding_session_id"]),
+        )
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plano de acao social nao encontrado")
+        return plan
+
+    def update_calendar_entry(
+        self,
+        *,
+        current: CurrentMembership,
+        entry_id: str,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        allowed = {"draft", "planned", "approved", "scheduled", "published", "archived"}
+        updates = {key: value for key, value in patch.items() if value is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nenhuma alteracao informada")
+        status = updates.get("status")
+        if status is not None and status not in allowed:
+            raise HTTPException(status_code=422, detail="Status do calendario invalido")
+
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_content_calendar_entries AS entry
+                SET status = COALESCE(:status, entry.status),
+                    scheduled_at = COALESCE(:scheduled_at, entry.scheduled_at),
+                    title = COALESCE(:title, entry.title),
+                    caption_outline = COALESCE(:caption_outline, entry.caption_outline),
+                    updated_at = NOW()
+                FROM social_action_plans AS plan
+                WHERE entry.action_plan_id = plan.id
+                  AND entry.tenant_id = :tenant_id
+                  AND entry.id = :entry_id
+                  AND plan.status = 'active'
+                RETURNING entry.onboarding_session_id
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "entry_id": entry_id,
+                "status": status,
+                "scheduled_at": updates.get("scheduled_at"),
+                "title": updates.get("title"),
+                "caption_outline": updates.get("caption_outline"),
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Entrada do calendario nao encontrada")
+        self.db.commit()
+        plan = self._get_active_action_plan(
+            tenant_id=str(current.tenant_id),
+            session_id=str(row["onboarding_session_id"]),
+        )
+        if plan is None:
+            raise HTTPException(status_code=404, detail="Plano de acao social nao encontrado")
+        return plan
+
     def _refresh_ready_report_if_benchmark_stale(self, *, row: dict[str, Any]) -> dict[str, Any]:
         current_report = dict(row.get("analysis_report") or {})
         references = self._list_references(
@@ -2970,6 +3343,59 @@ class SocialOnboardingService:
         )
         return row
 
+    def _get_active_action_plan(
+        self,
+        *,
+        tenant_id: str,
+        session_id: str,
+    ) -> dict[str, Any] | None:
+        plan = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_action_plans
+                WHERE tenant_id = :tenant_id
+                  AND onboarding_session_id = :session_id
+                  AND status = 'active'
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": tenant_id, "session_id": session_id},
+        ).mappings().first()
+        if plan is None:
+            return None
+        items = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_action_plan_items
+                WHERE tenant_id = :tenant_id
+                  AND action_plan_id = :action_plan_id
+                  AND status <> 'archived'
+                ORDER BY position ASC, id ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "action_plan_id": str(plan["id"])},
+        ).mappings().all()
+        calendar_entries = self.db.execute(
+            text(
+                """
+                SELECT *
+                FROM social_content_calendar_entries
+                WHERE tenant_id = :tenant_id
+                  AND action_plan_id = :action_plan_id
+                  AND status <> 'archived'
+                ORDER BY day_index ASC, scheduled_at ASC, id ASC
+                """
+            ),
+            {"tenant_id": tenant_id, "action_plan_id": str(plan["id"])},
+        ).mappings().all()
+        hydrated = dict(plan)
+        hydrated["items"] = [dict(item) for item in items]
+        hydrated["calendar_entries"] = [dict(entry) for entry in calendar_entries]
+        return hydrated
+
     def _get_reference(
         self,
         *,
@@ -3614,6 +4040,354 @@ def _parse_datetime(value: Any) -> datetime | None:
         return datetime.fromisoformat(normalized)
     except ValueError:
         return None
+
+
+def _text_value(value: Any, fallback: str = "") -> str:
+    if value is None:
+        return fallback
+    normalized = str(value).strip()
+    return normalized or fallback
+
+
+def _clamped_text(value: Any, fallback: str, *, limit: int = 500) -> str:
+    normalized = _text_value(value, fallback)
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: limit - 3].rstrip()}..."
+
+
+def _ready_specialist_analysis(
+    report: dict[str, Any],
+    *,
+    session: dict[str, Any],
+) -> dict[str, Any] | None:
+    analysis = report.get("specialist_analysis")
+    if not isinstance(analysis, dict):
+        return None
+    if analysis.get("status") != "ready":
+        return None
+    if analysis.get("version") != SOCIAL_SPECIALIST_ANALYSIS_VERSION:
+        return None
+    if _int_value(analysis.get("analysis_version")) != _int_value(session.get("analysis_version")):
+        return None
+    return analysis
+
+
+def _build_social_action_plan_payload(
+    *,
+    session: dict[str, Any],
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    handle = _text_value(session.get("connected_account_handle"), "perfil")
+    headline = _text_value(report.get("headline"), "Diagnostico social")
+    analysis = _dict_value(report.get("specialist_analysis"))
+    summary = _text_value(
+        analysis.get("executive_summary"),
+        f"Plano inicial derivado do diagnostico: {headline}.",
+    )
+    reference_context = _dict_value(report.get("reference_context"))
+    content_metrics = _dict_value(report.get("content_metrics"))
+    return {
+        "title": f"Plano de acao social - @{handle}",
+        "summary": _clamped_text(summary, f"Plano social para @{handle}.", limit=700),
+        "metadata": {
+            "source": "specialist_analysis",
+            "truth_contract_version": _dict_value(report.get("truth_contract")).get("version"),
+            "reference_status": reference_context.get("status"),
+            "best_format": content_metrics.get("best_format"),
+            "generated_from": {
+                "session_id": str(session.get("id")),
+                "analysis_version": _int_value(session.get("analysis_version")),
+                "specialist_version": analysis.get("version"),
+            },
+        },
+    }
+
+
+def _normalize_social_action_items(
+    *,
+    specialist_analysis: dict[str, Any],
+    report: dict[str, Any],
+) -> list[dict[str, Any]]:
+    raw_items = _list_value(specialist_analysis.get("action_plan"))
+    opportunities = _list_value(specialist_analysis.get("opportunities"))
+    reference_context = _dict_value(report.get("reference_context"))
+    content_metrics = _dict_value(report.get("content_metrics"))
+    best_format = _text_value(content_metrics.get("best_format"), "REEL")
+
+    items: list[dict[str, Any]] = []
+    for raw in raw_items:
+        item = _dict_value(raw)
+        if not item:
+            continue
+        title = _clamped_text(item.get("title"), "Acao social prioritaria", limit=180)
+        action = _clamped_text(item.get("action"), title, limit=900)
+        why = _clamped_text(
+            item.get("why_it_matters"),
+            (
+                "Esta acao deriva de sinais reais do perfil, dos posts analisados "
+                "e das referencias sincronizadas."
+            ),
+            limit=900,
+        )
+        how = _clamped_text(
+            item.get("how_to_execute"),
+            (
+                "Transforme a recomendacao em uma pauta curta, com gancho claro, "
+                "prova e chamada para resposta."
+            ),
+            limit=900,
+        )
+        expected_signal = _clamped_text(
+            item.get("expected_signal"),
+            "Acompanhar comentarios, compartilhamentos, salvamentos e taxa de resposta.",
+            limit=500,
+        )
+        measurement = _clamped_text(
+            item.get("measurement"),
+            "Comparar desempenho contra a media dos posts reais analisados.",
+            limit=500,
+        )
+        evidence = _clamped_text(
+            item.get("evidence"),
+            "Evidencia derivada do diagnostico especialista e do truth contract.",
+            limit=700,
+        )
+        priority = _text_value(item.get("priority"), "high").lower()
+        if priority not in {"low", "medium", "high"}:
+            priority = "high" if len(items) < 2 else "medium"
+        items.append(
+            {
+                "title": title,
+                "description": action,
+                "why_it_matters": why,
+                "how_to_execute": how,
+                "expected_signal": expected_signal,
+                "measurement": measurement,
+                "evidence": evidence,
+                "priority": priority,
+                "source": {"provider": "specialist_analysis", "raw": item},
+            }
+        )
+
+    fallback_sources = [
+        {
+            "title": "Refinar promessa da bio",
+            "description": (
+                "Reescrever a bio para deixar explicito para quem o perfil fala, "
+                "qual dor resolve e qual proximo passo o publico deve tomar."
+            ),
+            "why_it_matters": (
+                "A bio e o primeiro filtro de conversao. Promessa vaga reduz "
+                "follow, clique e resposta."
+            ),
+            "how_to_execute": (
+                "Criar 3 versoes de bio com publico, transformacao, prova e CTA; "
+                "publicar a mais objetiva e medir efeitos por 7 dias."
+            ),
+            "expected_signal": "Aumento de cliques, follows novos e respostas qualificadas.",
+            "measurement": (
+                "Comparar follows e cliques dos 7 dias seguintes contra os 7 dias anteriores."
+            ),
+            "evidence": _clamped_text(
+                _dict_value(report.get("profile")).get("bio"),
+                (
+                    "Bio lida no perfil conectado; tratar como oportunidade quando "
+                    "a promessa nao estiver mensuravel."
+                ),
+                limit=700,
+            ),
+            "priority": "high",
+        },
+        {
+            "title": f"Criar uma peca de prova social em formato {best_format}",
+            "description": (
+                "Publicar um conteudo com resultado, bastidor ou estudo de caso real "
+                "em vez de uma dica generica."
+            ),
+            "why_it_matters": (
+                "Os posts com prova concreta reduzem friccao e ajudam a audiencia "
+                "a entender por que confiar no perfil."
+            ),
+            "how_to_execute": (
+                "Abrir com uma situacao real, mostrar contexto, decisao tomada, "
+                "resultado e uma pergunta final para conversa."
+            ),
+            "expected_signal": (
+                "Mais comentarios salvos como duvidas, respostas e compartilhamentos."
+            ),
+            "measurement": "Medir interacoes por post e ER por seguidores contra a media atual.",
+            "evidence": (
+                "Top contents e referencias publicas indicam sinais de tracao em "
+                "conteudos com narrativa pratica."
+            ),
+            "priority": "high",
+        },
+        {
+            "title": "Extrair matriz dos melhores conteudos reais",
+            "description": (
+                "Separar os posts com maior sinal e quebrar cada um em gancho, "
+                "promessa, prova, formato e CTA."
+            ),
+            "why_it_matters": (
+                "A matriz evita criar do zero e transforma o que ja funcionou em "
+                "sistema repetivel."
+            ),
+            "how_to_execute": (
+                "Escolher 3 posts do perfil conectado e 3 posts das referencias; "
+                "classificar padroes e gerar variacoes."
+            ),
+            "expected_signal": "Mais consistencia entre pauta, formato e resposta do publico.",
+            "measurement": "Acompanhar variacao de interacoes por post durante o proximo ciclo.",
+            "evidence": "Conteudos reais persistidos no diagnostico e referencias sincronizadas.",
+            "priority": "medium",
+        },
+        {
+            "title": "Fechar briefing semanal com limites de verdade",
+            "description": (
+                "Transformar o diagnostico em um briefing que separa fatos, calculos, "
+                "inferencias e dados ausentes."
+            ),
+            "why_it_matters": (
+                "Isso impede recomendacoes inventadas e deixa a operacao social auditavel."
+            ),
+            "how_to_execute": (
+                "Usar somente dados presentes no truth contract; qualquer lacuna deve "
+                "virar pergunta ou teste, nao afirmacao."
+            ),
+            "expected_signal": "Recomendacoes mais confiaveis e menos retrabalho editorial.",
+            "measurement": (
+                "Revisar semanalmente se cada recomendacao tem evidencia real associada."
+            ),
+            "evidence": _text_value(
+                reference_context.get("truth_rule"),
+                "Truth contract do diagnostico.",
+            ),
+            "priority": "medium",
+        },
+    ]
+    for fallback in fallback_sources:
+        if len(items) >= 6:
+            break
+        titles = {item["title"].lower() for item in items}
+        if fallback["title"].lower() in titles:
+            continue
+        items.append({**fallback, "source": {"provider": "deterministic_fallback"}})
+
+    for opportunity in opportunities[:2]:
+        if len(items) >= 6:
+            break
+        raw = _dict_value(opportunity)
+        title = _clamped_text(raw.get("title"), "Oportunidade prioritaria", limit=180)
+        if title.lower() in {item["title"].lower() for item in items}:
+            continue
+        items.append(
+            {
+                "title": title,
+                "description": _clamped_text(raw.get("action"), title, limit=900),
+                "why_it_matters": _clamped_text(
+                    raw.get("evidence"),
+                    "Oportunidade apontada pela analise especialista.",
+                    limit=900,
+                ),
+                "how_to_execute": (
+                    "Transformar a oportunidade em uma pauta com gancho, evidencia "
+                    "e CTA mensuravel."
+                ),
+                "expected_signal": "Mais resposta qualificada do publico.",
+                "measurement": "Comparar interacoes por post contra a media do ciclo anterior.",
+                "evidence": _clamped_text(
+                    raw.get("evidence"),
+                    "Oportunidade da analise especialista.",
+                    limit=700,
+                ),
+                "priority": _text_value(raw.get("priority"), "medium").lower()
+                if _text_value(raw.get("priority"), "medium").lower() in {"low", "medium", "high"}
+                else "medium",
+                "source": {"provider": "specialist_opportunity", "raw": raw},
+            }
+        )
+
+    # Keep the first six actions compact enough for the operational view.
+    return items[:6]
+
+
+def _build_social_calendar_entries(
+    *,
+    items: list[dict[str, Any]],
+    report: dict[str, Any],
+    session: dict[str, Any],
+) -> list[dict[str, Any]]:
+    content_metrics = _dict_value(report.get("content_metrics"))
+    benchmark = _dict_value(report.get("competitive_benchmark"))
+    reference_profiles = _list_value(benchmark.get("reference_profiles"))
+    source_reference_handle = None
+    for raw_reference in reference_profiles:
+        reference = _dict_value(raw_reference)
+        if _int_value(reference.get("public_contents_count")):
+            source_reference_handle = reference.get("handle")
+            break
+
+    best_format = _text_value(content_metrics.get("best_format"), "REEL").upper()
+    format_cycle = [best_format, "CAROUSEL", "STORY", best_format, "IMAGE", "REEL", "CAROUSEL"]
+    start_at = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    handle = _text_value(session.get("connected_account_handle"), "perfil")
+
+    entries: list[dict[str, Any]] = []
+    for index in range(7):
+        item = items[index % len(items)] if items else {}
+        day_index = index + 1
+        content_format = format_cycle[index % len(format_cycle)]
+        title = _clamped_text(
+            item.get("title"),
+            f"Pauta {day_index} para @{handle}",
+            limit=180,
+        )
+        how_to_execute = _text_value(item.get("how_to_execute"), title)
+        description = _text_value(item.get("description"), title)
+        expected_signal = _text_value(item.get("expected_signal"), "Interacoes qualificadas")
+        measurement = _text_value(item.get("measurement"), "Medir interacoes por post")
+        evidence = _text_value(item.get("evidence"), "Dados reais do diagnostico")
+        entries.append(
+            {
+                "action_position": (index % len(items)) + 1 if items else None,
+                "scheduled_at": start_at + timedelta(days=index),
+                "day_index": day_index,
+                "title": f"Dia {day_index}: {title}",
+                "format": content_format,
+                "channel": "instagram",
+                "theme": title,
+                "hook": _clamped_text(how_to_execute, title, limit=700),
+                "caption_outline": _clamped_text(
+                    f"{description} Sinal esperado: {expected_signal}.",
+                    description,
+                    limit=1000,
+                ),
+                "cta": (
+                    "Convide o publico a comentar, salvar ou responder com uma duvida especifica."
+                ),
+                "evidence": _clamped_text(evidence, "Dados reais do diagnostico.", limit=700),
+                "objective": _clamped_text(measurement, "Medir interacoes por post.", limit=500),
+                "source_reference_handle": source_reference_handle,
+                "metrics_goal": {
+                    "primary": "interactions_per_content",
+                    "secondary": "engagement_rate_by_followers",
+                    "baseline_interactions": _float_value(content_metrics.get("interactions")),
+                    "baseline_er_followers": _float_value(
+                        content_metrics.get("engagement_rate_by_followers")
+                    ),
+                },
+                "metadata": {
+                    "generated_by": "labby_social_calendar_v1",
+                    "truth_contract_version": _dict_value(
+                        report.get("truth_contract")
+                    ).get("version"),
+                    "source_handle": handle,
+                    "format_basis": content_format,
+                },
+            }
+        )
+    return entries
 
 
 def _top_count_key(values: dict[str, int]) -> str | None:

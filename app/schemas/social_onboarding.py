@@ -13,6 +13,22 @@ SocialOnboardingObjective = Literal[
 ]
 SocialProvider = Literal["instagram", "youtube", "x", "linkedin", "fake"]
 SocialOnboardingStatus = Literal["draft", "connecting", "analyzing", "ready", "failed", "archived"]
+SocialActionItemStatus = Literal[
+    "pending",
+    "in_progress",
+    "approved",
+    "sent_to_calendar",
+    "done",
+    "archived",
+]
+SocialCalendarEntryStatus = Literal[
+    "draft",
+    "planned",
+    "approved",
+    "scheduled",
+    "published",
+    "archived",
+]
 
 
 class SocialOnboardingSessionCreate(BaseModel):
@@ -40,6 +56,18 @@ class SocialReferenceProfileCreate(BaseModel):
     profile_url: str | None = Field(default=None, max_length=1000)
 
 
+class SocialActionPlanItemPatch(BaseModel):
+    status: SocialActionItemStatus | None = None
+    notes: str | None = Field(default=None, max_length=1000)
+
+
+class SocialCalendarEntryPatch(BaseModel):
+    status: SocialCalendarEntryStatus | None = None
+    scheduled_at: datetime | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=220)
+    caption_outline: str | None = Field(default=None, max_length=2000)
+
+
 class SocialOnboardingPhylloCompleteRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=180)
     account_id: str = Field(min_length=1, max_length=180)
@@ -62,6 +90,63 @@ class SocialReferenceProfileResponse(BaseModel):
     data_truth: dict[str, Any] | None = None
     comparison_summary: dict[str, Any] | None = None
     created_at: datetime
+
+
+class SocialActionPlanItemResponse(BaseModel):
+    id: UUID
+    position: int
+    title: str
+    description: str
+    why_it_matters: str | None = None
+    how_to_execute: str | None = None
+    expected_signal: str | None = None
+    measurement: str | None = None
+    evidence: str | None = None
+    priority: str
+    status: str
+    source_json: dict[str, Any] | None = None
+    notes: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SocialCalendarEntryResponse(BaseModel):
+    id: UUID
+    action_item_id: UUID | None = None
+    scheduled_at: datetime
+    day_index: int
+    title: str
+    format: str
+    channel: str
+    status: str
+    theme: str | None = None
+    hook: str | None = None
+    caption_outline: str | None = None
+    cta: str | None = None
+    evidence: str | None = None
+    objective: str | None = None
+    source_reference_handle: str | None = None
+    metrics_goal_json: dict[str, Any] | None = None
+    metadata_json: dict[str, Any] | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class SocialActionPlanResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    onboarding_session_id: UUID
+    title: str
+    summary: str | None = None
+    status: str
+    source_analysis_version: int
+    source_specialist_version: str | None = None
+    plan_version: int
+    metadata_json: dict[str, Any] | None = None
+    items: list[SocialActionPlanItemResponse]
+    calendar_entries: list[SocialCalendarEntryResponse]
+    created_at: datetime
+    updated_at: datetime
 
 
 class SocialOnboardingJobResponse(BaseModel):

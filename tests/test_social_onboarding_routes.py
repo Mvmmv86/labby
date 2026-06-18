@@ -13,6 +13,9 @@ MEMBERSHIP_ID = UUID("33333333-3333-3333-3333-333333333333")
 SESSION_ID = UUID("44444444-4444-4444-4444-444444444444")
 REFERENCE_ID = UUID("55555555-5555-5555-5555-555555555555")
 JOB_ID = UUID("66666666-6666-6666-6666-666666666666")
+PLAN_ID = UUID("77777777-7777-7777-7777-777777777777")
+ACTION_ITEM_ID = UUID("88888888-8888-8888-8888-888888888888")
+CALENDAR_ENTRY_ID = UUID("99999999-9999-9999-9999-999999999999")
 
 
 class FakeSocialOnboardingService:
@@ -165,6 +168,38 @@ class FakeSocialOnboardingService:
             ),
         )
 
+    def get_action_plan(self, *, current, session_id):
+        self.current = current
+        return make_action_plan_row(onboarding_session_id=UUID(str(session_id)))
+
+    def generate_action_plan(self, *, current, session_id):
+        self.current = current
+        return make_action_plan_row(onboarding_session_id=UUID(str(session_id)))
+
+    def update_action_plan_item(self, *, current, item_id, patch):
+        self.current = current
+        self.connected_payload = {"item_id": item_id, "patch": patch}
+        return make_action_plan_row(
+            items=[
+                make_action_item_row(
+                    id=UUID(str(item_id)),
+                    status=patch.get("status") or "pending",
+                )
+            ]
+        )
+
+    def update_calendar_entry(self, *, current, entry_id, patch):
+        self.current = current
+        self.connected_payload = {"entry_id": entry_id, "patch": patch}
+        return make_action_plan_row(
+            calendar_entries=[
+                make_calendar_entry_row(
+                    id=UUID(str(entry_id)),
+                    status=patch.get("status") or "planned",
+                )
+            ]
+        )
+
 
 def make_current(modules: tuple[str, ...] = ("social_media",)) -> CurrentMembership:
     return CurrentMembership(
@@ -196,6 +231,78 @@ def make_reference_row(**overrides):
         "data_truth": {"source": "manual_input"},
         "comparison_summary": {},
         "created_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_action_item_row(**overrides):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    row = {
+        "id": ACTION_ITEM_ID,
+        "position": 1,
+        "title": "Refinar promessa da bio",
+        "description": "Transformar a promessa em uma frase mensuravel.",
+        "why_it_matters": "A bio cria expectativa e qualifica o publico.",
+        "how_to_execute": "Escrever para quem, dor, resultado e proximo passo.",
+        "expected_signal": "Mais visitas qualificadas e respostas no perfil.",
+        "measurement": "Comparar visitas e replies antes/depois.",
+        "evidence": "Bio lida e posts reais apontam promessa pouco especifica.",
+        "priority": "high",
+        "status": "pending",
+        "source_json": {"provider": "test"},
+        "notes": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_calendar_entry_row(**overrides):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    row = {
+        "id": CALENDAR_ENTRY_ID,
+        "action_item_id": ACTION_ITEM_ID,
+        "scheduled_at": now,
+        "day_index": 1,
+        "title": "Reel de prova social",
+        "format": "REELS / VIDEO",
+        "channel": "instagram",
+        "status": "planned",
+        "theme": "Prova social",
+        "hook": "O que mudou quando a promessa ficou clara.",
+        "caption_outline": "Abrir com dor, mostrar evidencia e fechar com CTA.",
+        "cta": "Responder com uma duvida.",
+        "evidence": "Top contents reais e referencias sincronizadas.",
+        "objective": "Aumentar comentarios qualificados.",
+        "source_reference_handle": "referencia",
+        "metrics_goal_json": {"target": "comments"},
+        "metadata_json": {"source": "test"},
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
+def make_action_plan_row(**overrides):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    row = {
+        "id": PLAN_ID,
+        "tenant_id": TENANT_ID,
+        "onboarding_session_id": SESSION_ID,
+        "title": "Plano social inicial",
+        "summary": "Plano de 7 dias baseado no diagnostico especialista.",
+        "status": "active",
+        "source_analysis_version": 4,
+        "source_specialist_version": "social_specialist_v1",
+        "plan_version": 1,
+        "metadata_json": {"mode": "comparativo"},
+        "items": [make_action_item_row()],
+        "calendar_entries": [make_calendar_entry_row()],
+        "created_at": now,
+        "updated_at": now,
     }
     row.update(overrides)
     return row
@@ -416,3 +523,70 @@ def test_enqueue_specialist_analysis_contract() -> None:
     assert body["session"]["analysis_report"]["specialist_analysis"]["status"] == "queued"
     assert body["job"]["job_type"] == "social.onboarding.specialist_analysis"
     assert service.current.tenant_id == TENANT_ID
+
+
+def test_get_action_plan_contract() -> None:
+    client, service = make_client()
+
+    response = client.get(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/action-plan",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(PLAN_ID)
+    assert body["items"][0]["why_it_matters"]
+    assert body["items"][0]["how_to_execute"]
+    assert body["calendar_entries"][0]["format"] == "REELS / VIDEO"
+    assert service.current.tenant_id == TENANT_ID
+
+
+def test_generate_action_plan_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/action-plan/generate",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "active"
+    assert body["source_analysis_version"] == 4
+    assert body["calendar_entries"][0]["hook"]
+    assert service.current.tenant_id == TENANT_ID
+
+
+def test_update_action_plan_item_contract() -> None:
+    client, service = make_client()
+
+    response = client.patch(
+        f"/api/v2/labby/social/onboarding/action-plan/items/{ACTION_ITEM_ID}",
+        json={"status": "done", "notes": "Feito no smoke"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["items"][0]["id"] == str(ACTION_ITEM_ID)
+    assert body["items"][0]["status"] == "done"
+    assert service.connected_payload == {
+        "item_id": str(ACTION_ITEM_ID),
+        "patch": {"status": "done", "notes": "Feito no smoke"},
+    }
+
+
+def test_update_calendar_entry_contract() -> None:
+    client, service = make_client()
+
+    response = client.patch(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/{CALENDAR_ENTRY_ID}",
+        json={"status": "scheduled", "title": "Reel ajustado"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["calendar_entries"][0]["id"] == str(CALENDAR_ENTRY_ID)
+    assert body["calendar_entries"][0]["status"] == "scheduled"
+    assert service.connected_payload == {
+        "entry_id": str(CALENDAR_ENTRY_ID),
+        "patch": {"status": "scheduled", "title": "Reel ajustado"},
+    }

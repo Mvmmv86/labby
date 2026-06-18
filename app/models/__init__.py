@@ -24,7 +24,10 @@ from app.models.social_news import (
     SocialNewsSubscriberConsentEvent,
 )
 from app.models.social_onboarding import (
+    SocialActionPlan,
+    SocialActionPlanItem,
     SocialConnectedContent,
+    SocialContentCalendarEntry,
     SocialOnboardingSession,
     SocialPhylloAccount,
     SocialPhylloUser,
@@ -59,7 +62,10 @@ __all__ = [
     "SocialNewsSource",
     "SocialNewsSubscriber",
     "SocialNewsSubscriberConsentEvent",
+    "SocialActionPlan",
+    "SocialActionPlanItem",
     "SocialConnectedContent",
+    "SocialContentCalendarEntry",
     "SocialOnboardingSession",
     "SocialPhylloAccount",
     "SocialPhylloUser",

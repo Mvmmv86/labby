@@ -468,3 +468,191 @@ class SocialConnectedContent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+
+
+class SocialActionPlan(Base):
+    __tablename__ = "social_action_plans"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'archived')",
+            name="ck_social_action_plans_status",
+        ),
+        Index(
+            "ix_social_action_plans_tenant_session_status",
+            "tenant_id",
+            "onboarding_session_id",
+            "status",
+        ),
+        Index(
+            "uq_social_action_plans_active_session",
+            "tenant_id",
+            "onboarding_session_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    onboarding_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    updated_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    title: Mapped[str] = mapped_column(String(180), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="active")
+    source_analysis_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_specialist_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    plan_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    metadata_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SocialActionPlanItem(Base):
+    __tablename__ = "social_action_plan_items"
+    __table_args__ = (
+        CheckConstraint(
+            "priority IN ('low', 'medium', 'high')",
+            name="ck_social_action_plan_items_priority",
+        ),
+        CheckConstraint(
+            "status IN ("
+            "'pending', 'in_progress', 'approved', 'sent_to_calendar', 'done', 'archived'"
+            ")",
+            name="ck_social_action_plan_items_status",
+        ),
+        UniqueConstraint(
+            "action_plan_id",
+            "position",
+            name="uq_social_action_plan_items_plan_position",
+        ),
+        Index(
+            "ix_social_action_plan_items_tenant_plan_position",
+            "tenant_id",
+            "action_plan_id",
+            "position",
+        ),
+        Index(
+            "ix_social_action_plan_items_tenant_status",
+            "tenant_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    action_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    onboarding_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    why_it_matters: Mapped[str | None] = mapped_column(Text)
+    how_to_execute: Mapped[str | None] = mapped_column(Text)
+    expected_signal: Mapped[str | None] = mapped_column(Text)
+    measurement: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="pending")
+    source_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    notes: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SocialContentCalendarEntry(Base):
+    __tablename__ = "social_content_calendar_entries"
+    __table_args__ = (
+        CheckConstraint(
+            "channel IN ('instagram', 'youtube', 'x', 'linkedin', 'multi')",
+            name="ck_social_content_calendar_entries_channel",
+        ),
+        CheckConstraint(
+            "status IN ('draft', 'planned', 'approved', 'scheduled', 'published', 'archived')",
+            name="ck_social_content_calendar_entries_status",
+        ),
+        Index(
+            "ix_social_content_calendar_tenant_plan_day",
+            "tenant_id",
+            "action_plan_id",
+            "day_index",
+        ),
+        Index(
+            "ix_social_content_calendar_tenant_scheduled",
+            "tenant_id",
+            "scheduled_at",
+            "status",
+        ),
+        Index("ix_social_content_calendar_action_item", "action_item_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    action_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    action_item_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_action_plan_items.id", ondelete="SET NULL")
+    )
+    onboarding_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scheduled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    day_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    format: Mapped[str] = mapped_column(String(40), nullable=False)
+    channel: Mapped[str] = mapped_column(String(40), nullable=False, default="instagram")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
+    theme: Mapped[str | None] = mapped_column(Text)
+    hook: Mapped[str | None] = mapped_column(Text)
+    caption_outline: Mapped[str | None] = mapped_column(Text)
+    cta: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[str | None] = mapped_column(Text)
+    objective: Mapped[str | None] = mapped_column(Text)
+    source_reference_handle: Mapped[str | None] = mapped_column(String(180))
+    metrics_goal_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    metadata_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
