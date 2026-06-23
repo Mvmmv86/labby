@@ -65,7 +65,15 @@ class SocialCalendarEntryPatch(BaseModel):
     status: SocialCalendarEntryStatus | None = None
     scheduled_at: datetime | None = None
     title: str | None = Field(default=None, min_length=1, max_length=220)
+    format: str | None = Field(default=None, min_length=1, max_length=60)
+    channel: str | None = Field(default=None, min_length=1, max_length=60)
+    theme: str | None = Field(default=None, max_length=180)
+    hook: str | None = Field(default=None, max_length=1000)
     caption_outline: str | None = Field(default=None, max_length=2000)
+    cta: str | None = Field(default=None, max_length=1000)
+    evidence: str | None = Field(default=None, max_length=1000)
+    objective: str | None = Field(default=None, max_length=1000)
+    source_reference_handle: str | None = Field(default=None, max_length=180)
 
 
 class SocialOnboardingPhylloCompleteRequest(BaseModel):

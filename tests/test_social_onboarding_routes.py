@@ -579,7 +579,19 @@ def test_update_calendar_entry_contract() -> None:
 
     response = client.patch(
         f"/api/v2/labby/social/onboarding/action-plan/calendar/{CALENDAR_ENTRY_ID}",
-        json={"status": "scheduled", "title": "Reel ajustado"},
+        json={
+            "status": "scheduled",
+            "title": "Reel ajustado",
+            "format": "REEL",
+            "channel": "instagram",
+            "theme": "prova social",
+            "hook": "Abrir com uma objecao real do publico.",
+            "caption_outline": "Roteiro manual revisado",
+            "cta": "Comente sua duvida",
+            "evidence": "Post de referencia com alto comentario.",
+            "objective": "Medir comentarios qualificados.",
+            "source_reference_handle": "evandro_pit",
+        },
     )
 
     assert response.status_code == 200
@@ -588,5 +600,17 @@ def test_update_calendar_entry_contract() -> None:
     assert body["calendar_entries"][0]["status"] == "scheduled"
     assert service.connected_payload == {
         "entry_id": str(CALENDAR_ENTRY_ID),
-        "patch": {"status": "scheduled", "title": "Reel ajustado"},
+        "patch": {
+            "status": "scheduled",
+            "title": "Reel ajustado",
+            "format": "REEL",
+            "channel": "instagram",
+            "theme": "prova social",
+            "hook": "Abrir com uma objecao real do publico.",
+            "caption_outline": "Roteiro manual revisado",
+            "cta": "Comente sua duvida",
+            "evidence": "Post de referencia com alto comentario.",
+            "objective": "Medir comentarios qualificados.",
+            "source_reference_handle": "evandro_pit",
+        },
     }

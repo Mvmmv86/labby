@@ -1433,7 +1433,18 @@ class SocialOnboardingService:
                 SET status = COALESCE(:status, entry.status),
                     scheduled_at = COALESCE(:scheduled_at, entry.scheduled_at),
                     title = COALESCE(:title, entry.title),
+                    format = COALESCE(:format, entry.format),
+                    channel = COALESCE(:channel, entry.channel),
+                    theme = COALESCE(:theme, entry.theme),
+                    hook = COALESCE(:hook, entry.hook),
                     caption_outline = COALESCE(:caption_outline, entry.caption_outline),
+                    cta = COALESCE(:cta, entry.cta),
+                    evidence = COALESCE(:evidence, entry.evidence),
+                    objective = COALESCE(:objective, entry.objective),
+                    source_reference_handle = COALESCE(
+                        :source_reference_handle,
+                        entry.source_reference_handle
+                    ),
                     updated_at = NOW()
                 FROM social_action_plans AS plan
                 WHERE entry.action_plan_id = plan.id
@@ -1449,7 +1460,15 @@ class SocialOnboardingService:
                 "status": status,
                 "scheduled_at": updates.get("scheduled_at"),
                 "title": updates.get("title"),
+                "format": updates.get("format"),
+                "channel": updates.get("channel"),
+                "theme": updates.get("theme"),
+                "hook": updates.get("hook"),
                 "caption_outline": updates.get("caption_outline"),
+                "cta": updates.get("cta"),
+                "evidence": updates.get("evidence"),
+                "objective": updates.get("objective"),
+                "source_reference_handle": updates.get("source_reference_handle"),
             },
         ).mappings().first()
         if row is None:
