@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -650,6 +651,98 @@ class SocialContentCalendarEntry(Base):
     metadata_json: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SocialContentDraft(Base):
+    __tablename__ = "social_content_drafts"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'in_review', 'approved', 'archived')",
+            name="ck_social_content_drafts_status",
+        ),
+        CheckConstraint(
+            "draft_version > 0",
+            name="ck_social_content_drafts_version_positive",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "calendar_entry_id",
+            "draft_version",
+            name="uq_social_content_drafts_entry_version",
+        ),
+        Index(
+            "uq_social_content_drafts_current_entry",
+            "tenant_id",
+            "calendar_entry_id",
+            unique=True,
+            postgresql_where=text("is_current = true"),
+        ),
+        Index(
+            "ix_social_content_drafts_tenant_entry_current",
+            "tenant_id",
+            "calendar_entry_id",
+            "is_current",
+        ),
+        Index(
+            "ix_social_content_drafts_tenant_status_updated",
+            "tenant_id",
+            "status",
+            "updated_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    calendar_entry_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_content_calendar_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    action_plan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("social_action_plans.id", ondelete="CASCADE"), nullable=False
+    )
+    onboarding_session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("social_onboarding_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    updated_by_membership_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("memberships.id", ondelete="SET NULL")
+    )
+    draft_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
+    format: Mapped[str] = mapped_column(String(40), nullable=False)
+    channel: Mapped[str] = mapped_column(String(40), nullable=False, default="instagram")
+    title: Mapped[str] = mapped_column(String(220), nullable=False)
+    angle: Mapped[str | None] = mapped_column(Text)
+    hook: Mapped[str | None] = mapped_column(Text)
+    caption: Mapped[str | None] = mapped_column(Text)
+    cta: Mapped[str | None] = mapped_column(Text)
+    visual_direction: Mapped[str | None] = mapped_column(Text)
+    script_json: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    production_checklist_json: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
+    evidence_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    metadata_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

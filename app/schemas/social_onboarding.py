@@ -29,6 +29,7 @@ SocialCalendarEntryStatus = Literal[
     "published",
     "archived",
 ]
+SocialContentDraftStatus = Literal["draft", "in_review", "approved", "archived"]
 
 
 class SocialOnboardingSessionCreate(BaseModel):
@@ -76,6 +77,18 @@ class SocialCalendarEntryPatch(BaseModel):
     source_reference_handle: str | None = Field(default=None, max_length=180)
 
 
+class SocialContentDraftPatch(BaseModel):
+    status: SocialContentDraftStatus | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=220)
+    angle: str | None = Field(default=None, max_length=1000)
+    hook: str | None = Field(default=None, max_length=1000)
+    caption: str | None = Field(default=None, max_length=4000)
+    cta: str | None = Field(default=None, max_length=1000)
+    visual_direction: str | None = Field(default=None, max_length=2000)
+    script_json: list[dict[str, Any]] | None = None
+    production_checklist_json: list[dict[str, Any]] | None = None
+
+
 class SocialOnboardingPhylloCompleteRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=180)
     account_id: str = Field(min_length=1, max_length=180)
@@ -118,6 +131,30 @@ class SocialActionPlanItemResponse(BaseModel):
     updated_at: datetime
 
 
+class SocialContentDraftResponse(BaseModel):
+    id: UUID
+    calendar_entry_id: UUID
+    action_plan_id: UUID
+    onboarding_session_id: UUID
+    draft_version: int
+    status: str
+    format: str
+    channel: str
+    title: str
+    angle: str | None = None
+    hook: str | None = None
+    caption: str | None = None
+    cta: str | None = None
+    visual_direction: str | None = None
+    script_json: list[dict[str, Any]]
+    production_checklist_json: list[dict[str, Any]]
+    evidence_json: dict[str, Any] | None = None
+    metadata_json: dict[str, Any] | None = None
+    is_current: bool
+    created_at: datetime
+    updated_at: datetime
+
+
 class SocialCalendarEntryResponse(BaseModel):
     id: UUID
     action_item_id: UUID | None = None
@@ -136,6 +173,7 @@ class SocialCalendarEntryResponse(BaseModel):
     source_reference_handle: str | None = None
     metrics_goal_json: dict[str, Any] | None = None
     metadata_json: dict[str, Any] | None = None
+    current_draft: SocialContentDraftResponse | None = None
     created_at: datetime
     updated_at: datetime
 

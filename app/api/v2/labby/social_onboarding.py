@@ -13,6 +13,8 @@ from app.schemas.social_onboarding import (
     SocialActionPlanResponse,
     SocialCalendarEntryPatch,
     SocialCalendarEntryResponse,
+    SocialContentDraftPatch,
+    SocialContentDraftResponse,
     SocialOnboardingCurrentResponse,
     SocialOnboardingFakeConnectRequest,
     SocialOnboardingJobResponse,
@@ -286,6 +288,53 @@ def update_calendar_entry(
     )
 
 
+@router.get(
+    "/action-plan/calendar/{entry_id}/drafts/current",
+    response_model=SocialContentDraftResponse,
+)
+def get_current_content_draft(
+    entry_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialContentDraftResponse:
+    return _content_draft_response(
+        service.get_current_content_draft(current=current, entry_id=str(entry_id))
+    )
+
+
+@router.post(
+    "/action-plan/calendar/{entry_id}/drafts/generate",
+    response_model=SocialContentDraftResponse,
+)
+def generate_content_draft(
+    entry_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialContentDraftResponse:
+    return _content_draft_response(
+        service.generate_content_draft(current=current, entry_id=str(entry_id))
+    )
+
+
+@router.patch(
+    "/action-plan/calendar/drafts/{draft_id}",
+    response_model=SocialContentDraftResponse,
+)
+def update_content_draft(
+    draft_id: UUID,
+    data: SocialContentDraftPatch,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialContentDraftResponse:
+    return _content_draft_response(
+        service.update_content_draft(
+            current=current,
+            draft_id=str(draft_id),
+            patch=data.model_dump(exclude_unset=True),
+        )
+    )
+
+
 def _session_response(row: dict) -> SocialOnboardingSessionResponse:
     return SocialOnboardingSessionResponse(
         id=row["id"],
@@ -391,6 +440,35 @@ def _calendar_entry_response(row: dict) -> SocialCalendarEntryResponse:
         source_reference_handle=row.get("source_reference_handle"),
         metrics_goal_json=row.get("metrics_goal_json"),
         metadata_json=row.get("metadata_json"),
+        current_draft=_content_draft_response(row["current_draft"])
+        if row.get("current_draft")
+        else None,
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
+
+
+def _content_draft_response(row: dict) -> SocialContentDraftResponse:
+    return SocialContentDraftResponse(
+        id=row["id"],
+        calendar_entry_id=row["calendar_entry_id"],
+        action_plan_id=row["action_plan_id"],
+        onboarding_session_id=row["onboarding_session_id"],
+        draft_version=row["draft_version"],
+        status=row["status"],
+        format=row["format"],
+        channel=row["channel"],
+        title=row["title"],
+        angle=row.get("angle"),
+        hook=row.get("hook"),
+        caption=row.get("caption"),
+        cta=row.get("cta"),
+        visual_direction=row.get("visual_direction"),
+        script_json=list(row.get("script_json") or []),
+        production_checklist_json=list(row.get("production_checklist_json") or []),
+        evidence_json=row.get("evidence_json"),
+        metadata_json=row.get("metadata_json"),
+        is_current=bool(row.get("is_current")),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

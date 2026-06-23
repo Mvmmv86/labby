@@ -16,6 +16,7 @@ JOB_ID = UUID("66666666-6666-6666-6666-666666666666")
 PLAN_ID = UUID("77777777-7777-7777-7777-777777777777")
 ACTION_ITEM_ID = UUID("88888888-8888-8888-8888-888888888888")
 CALENDAR_ENTRY_ID = UUID("99999999-9999-9999-9999-999999999999")
+DRAFT_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
 
 class FakeSocialOnboardingService:
@@ -200,6 +201,20 @@ class FakeSocialOnboardingService:
             ]
         )
 
+    def get_current_content_draft(self, *, current, entry_id):
+        self.current = current
+        return make_content_draft_row(calendar_entry_id=UUID(str(entry_id)))
+
+    def generate_content_draft(self, *, current, entry_id):
+        self.current = current
+        self.connected_payload = {"entry_id": entry_id}
+        return make_content_draft_row(calendar_entry_id=UUID(str(entry_id)), draft_version=2)
+
+    def update_content_draft(self, *, current, draft_id, patch):
+        self.current = current
+        self.connected_payload = {"draft_id": draft_id, "patch": patch}
+        return make_content_draft_row(id=UUID(str(draft_id)), **patch)
+
 
 def make_current(modules: tuple[str, ...] = ("social_media",)) -> CurrentMembership:
     return CurrentMembership(
@@ -259,6 +274,39 @@ def make_action_item_row(**overrides):
     return row
 
 
+def make_content_draft_row(**overrides):
+    now = datetime(2026, 6, 8, tzinfo=UTC)
+    row = {
+        "id": DRAFT_ID,
+        "calendar_entry_id": CALENDAR_ENTRY_ID,
+        "action_plan_id": PLAN_ID,
+        "onboarding_session_id": SESSION_ID,
+        "draft_version": 1,
+        "status": "draft",
+        "format": "REEL",
+        "channel": "instagram",
+        "title": "Reel de prova social",
+        "angle": "Mostrar uma transformacao concreta.",
+        "hook": "O que mudou quando a promessa ficou clara.",
+        "caption": "Gancho\n\nEvidencia\n\nCTA",
+        "cta": "Comente sua duvida",
+        "visual_direction": "Video vertical com cortes curtos.",
+        "script_json": [
+            {"label": "Abertura", "instruction": "Comecar pelo conflito."},
+        ],
+        "production_checklist_json": [
+            {"label": "Validar evidencia real", "done": False},
+        ],
+        "evidence_json": {"source_reference_handle": "referencia"},
+        "metadata_json": {"generated_by": "test"},
+        "is_current": True,
+        "created_at": now,
+        "updated_at": now,
+    }
+    row.update(overrides)
+    return row
+
+
 def make_calendar_entry_row(**overrides):
     now = datetime(2026, 6, 8, tzinfo=UTC)
     row = {
@@ -279,6 +327,7 @@ def make_calendar_entry_row(**overrides):
         "source_reference_handle": "referencia",
         "metrics_goal_json": {"target": "comments"},
         "metadata_json": {"source": "test"},
+        "current_draft": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -528,6 +577,15 @@ def test_enqueue_specialist_analysis_contract() -> None:
 def test_get_action_plan_contract() -> None:
     client, service = make_client()
 
+    def get_action_plan_with_draft(*, current, session_id):
+        service.current = current
+        return make_action_plan_row(
+            onboarding_session_id=UUID(str(session_id)),
+            calendar_entries=[make_calendar_entry_row(current_draft=make_content_draft_row())],
+        )
+
+    service.get_action_plan = get_action_plan_with_draft
+
     response = client.get(
         f"/api/v2/labby/social/onboarding/sessions/{SESSION_ID}/action-plan",
     )
@@ -538,6 +596,7 @@ def test_get_action_plan_contract() -> None:
     assert body["items"][0]["why_it_matters"]
     assert body["items"][0]["how_to_execute"]
     assert body["calendar_entries"][0]["format"] == "REELS / VIDEO"
+    assert body["calendar_entries"][0]["current_draft"]["id"] == str(DRAFT_ID)
     assert service.current.tenant_id == TENANT_ID
 
 
@@ -612,5 +671,63 @@ def test_update_calendar_entry_contract() -> None:
             "evidence": "Post de referencia com alto comentario.",
             "objective": "Medir comentarios qualificados.",
             "source_reference_handle": "evandro_pit",
+        },
+    }
+
+
+def test_get_current_content_draft_contract() -> None:
+    client, service = make_client()
+
+    response = client.get(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/{CALENDAR_ENTRY_ID}/drafts/current",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(DRAFT_ID)
+    assert body["calendar_entry_id"] == str(CALENDAR_ENTRY_ID)
+    assert body["script_json"][0]["label"] == "Abertura"
+    assert service.current.tenant_id == TENANT_ID
+
+
+def test_generate_content_draft_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/{CALENDAR_ENTRY_ID}/drafts/generate",
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["draft_version"] == 2
+    assert body["status"] == "draft"
+    assert body["production_checklist_json"][0]["label"] == "Validar evidencia real"
+    assert service.connected_payload == {"entry_id": str(CALENDAR_ENTRY_ID)}
+
+
+def test_update_content_draft_contract() -> None:
+    client, service = make_client()
+
+    response = client.patch(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/drafts/{DRAFT_ID}",
+        json={
+            "status": "in_review",
+            "title": "Reel revisado",
+            "caption": "Legenda ajustada manualmente",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(DRAFT_ID)
+    assert body["status"] == "in_review"
+    assert body["title"] == "Reel revisado"
+    assert body["caption"] == "Legenda ajustada manualmente"
+    assert service.connected_payload == {
+        "draft_id": str(DRAFT_ID),
+        "patch": {
+            "status": "in_review",
+            "title": "Reel revisado",
+            "caption": "Legenda ajustada manualmente",
         },
     }

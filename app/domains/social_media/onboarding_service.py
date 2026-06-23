@@ -1483,6 +1483,237 @@ class SocialOnboardingService:
             raise HTTPException(status_code=404, detail="Plano de acao social nao encontrado")
         return plan
 
+    def get_current_content_draft(
+        self,
+        *,
+        current: CurrentMembership,
+        entry_id: str,
+    ) -> dict[str, Any]:
+        row = self.db.execute(
+            text(
+                """
+                SELECT draft.*
+                FROM social_content_drafts AS draft
+                JOIN social_content_calendar_entries AS entry
+                  ON entry.id = draft.calendar_entry_id
+                 AND entry.tenant_id = draft.tenant_id
+                JOIN social_action_plans AS plan
+                  ON plan.id = entry.action_plan_id
+                 AND plan.tenant_id = entry.tenant_id
+                WHERE draft.tenant_id = :tenant_id
+                  AND draft.calendar_entry_id = :entry_id
+                  AND draft.is_current = TRUE
+                  AND draft.status <> 'archived'
+                  AND entry.status <> 'archived'
+                  AND plan.status = 'active'
+                ORDER BY draft.draft_version DESC, draft.created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "entry_id": entry_id},
+        ).mappings().first()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Rascunho de conteudo nao encontrado")
+        return dict(row)
+
+    def generate_content_draft(
+        self,
+        *,
+        current: CurrentMembership,
+        entry_id: str,
+    ) -> dict[str, Any]:
+        entry = self._get_calendar_entry_for_content_draft(
+            tenant_id=str(current.tenant_id),
+            entry_id=entry_id,
+            for_update=True,
+        )
+        if entry is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Entrada do calendario nao encontrada")
+
+        next_version = self.db.execute(
+            text(
+                """
+                SELECT COALESCE(MAX(draft_version), 0) + 1 AS next_version
+                FROM social_content_drafts
+                WHERE tenant_id = :tenant_id
+                  AND calendar_entry_id = :entry_id
+                """
+            ),
+            {"tenant_id": str(current.tenant_id), "entry_id": entry_id},
+        ).scalar_one()
+        draft_payload = _build_social_content_draft_payload(entry)
+
+        self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts
+                SET is_current = FALSE,
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND calendar_entry_id = :entry_id
+                  AND is_current = TRUE
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "entry_id": entry_id,
+                "membership_id": str(current.membership_id),
+            },
+        )
+        row = self.db.execute(
+            text(
+                """
+                INSERT INTO social_content_drafts (
+                    tenant_id,
+                    calendar_entry_id,
+                    action_plan_id,
+                    onboarding_session_id,
+                    created_by_membership_id,
+                    updated_by_membership_id,
+                    draft_version,
+                    status,
+                    format,
+                    channel,
+                    title,
+                    angle,
+                    hook,
+                    caption,
+                    cta,
+                    visual_direction,
+                    script_json,
+                    production_checklist_json,
+                    evidence_json,
+                    metadata_json,
+                    is_current
+                )
+                VALUES (
+                    :tenant_id,
+                    :calendar_entry_id,
+                    :action_plan_id,
+                    :onboarding_session_id,
+                    :membership_id,
+                    :membership_id,
+                    :draft_version,
+                    'draft',
+                    :format,
+                    :channel,
+                    :title,
+                    :angle,
+                    :hook,
+                    :caption,
+                    :cta,
+                    :visual_direction,
+                    CAST(:script_json AS jsonb),
+                    CAST(:production_checklist_json AS jsonb),
+                    CAST(:evidence_json AS jsonb),
+                    CAST(:metadata_json AS jsonb),
+                    TRUE
+                )
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "calendar_entry_id": entry_id,
+                "action_plan_id": str(entry["action_plan_id"]),
+                "onboarding_session_id": str(entry["onboarding_session_id"]),
+                "membership_id": str(current.membership_id),
+                "draft_version": int(next_version),
+                "format": draft_payload["format"],
+                "channel": draft_payload["channel"],
+                "title": draft_payload["title"],
+                "angle": draft_payload["angle"],
+                "hook": draft_payload["hook"],
+                "caption": draft_payload["caption"],
+                "cta": draft_payload["cta"],
+                "visual_direction": draft_payload["visual_direction"],
+                "script_json": json.dumps(draft_payload["script_json"]),
+                "production_checklist_json": json.dumps(
+                    draft_payload["production_checklist_json"]
+                ),
+                "evidence_json": json.dumps(draft_payload["evidence_json"]),
+                "metadata_json": json.dumps(draft_payload["metadata_json"]),
+            },
+        ).mappings().one()
+        self.db.commit()
+        return dict(row)
+
+    def update_content_draft(
+        self,
+        *,
+        current: CurrentMembership,
+        draft_id: str,
+        patch: dict[str, Any],
+    ) -> dict[str, Any]:
+        allowed_status = {"draft", "in_review", "approved", "archived"}
+        updates = {key: value for key, value in patch.items() if value is not None}
+        if not updates:
+            raise HTTPException(status_code=400, detail="Nenhuma alteracao informada")
+        status = updates.get("status")
+        if status is not None and status not in allowed_status:
+            raise HTTPException(status_code=422, detail="Status do rascunho invalido")
+
+        row = self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts AS draft
+                SET status = COALESCE(:status, draft.status),
+                    title = COALESCE(:title, draft.title),
+                    angle = COALESCE(:angle, draft.angle),
+                    hook = COALESCE(:hook, draft.hook),
+                    caption = COALESCE(:caption, draft.caption),
+                    cta = COALESCE(:cta, draft.cta),
+                    visual_direction = COALESCE(:visual_direction, draft.visual_direction),
+                    script_json = COALESCE(CAST(:script_json AS jsonb), draft.script_json),
+                    production_checklist_json = COALESCE(
+                        CAST(:production_checklist_json AS jsonb),
+                        draft.production_checklist_json
+                    ),
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                FROM social_content_calendar_entries AS entry
+                JOIN social_action_plans AS plan
+                  ON plan.id = entry.action_plan_id
+                 AND plan.tenant_id = entry.tenant_id
+                WHERE draft.calendar_entry_id = entry.id
+                  AND draft.tenant_id = entry.tenant_id
+                  AND draft.tenant_id = :tenant_id
+                  AND draft.id = :draft_id
+                  AND draft.is_current = TRUE
+                  AND entry.status <> 'archived'
+                  AND plan.status = 'active'
+                RETURNING draft.*
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "draft_id": draft_id,
+                "membership_id": str(current.membership_id),
+                "status": status,
+                "title": updates.get("title"),
+                "angle": updates.get("angle"),
+                "hook": updates.get("hook"),
+                "caption": updates.get("caption"),
+                "cta": updates.get("cta"),
+                "visual_direction": updates.get("visual_direction"),
+                "script_json": json.dumps(updates["script_json"])
+                if "script_json" in updates
+                else None,
+                "production_checklist_json": json.dumps(
+                    updates["production_checklist_json"]
+                )
+                if "production_checklist_json" in updates
+                else None,
+            },
+        ).mappings().first()
+        if row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Rascunho de conteudo nao encontrado")
+        self.db.commit()
+        return dict(row)
+
     def _refresh_ready_report_if_benchmark_stale(self, *, row: dict[str, Any]) -> dict[str, Any]:
         current_report = dict(row.get("analysis_report") or {})
         references = self._list_references(
@@ -3410,10 +3641,62 @@ class SocialOnboardingService:
             ),
             {"tenant_id": tenant_id, "action_plan_id": str(plan["id"])},
         ).mappings().all()
+        entry_rows = [dict(entry) for entry in calendar_entries]
+        if entry_rows:
+            current_drafts = self.db.execute(
+                text(
+                    """
+                    SELECT *
+                    FROM social_content_drafts
+                    WHERE tenant_id = :tenant_id
+                      AND action_plan_id = :action_plan_id
+                      AND calendar_entry_id IN :entry_ids
+                      AND is_current = TRUE
+                      AND status <> 'archived'
+                    """
+                ).bindparams(bindparam("entry_ids", expanding=True)),
+                {
+                    "tenant_id": tenant_id,
+                    "action_plan_id": str(plan["id"]),
+                    "entry_ids": [str(entry["id"]) for entry in entry_rows],
+                },
+            ).mappings().all()
+            drafts_by_entry = {
+                str(draft["calendar_entry_id"]): dict(draft) for draft in current_drafts
+            }
+            for entry in entry_rows:
+                entry["current_draft"] = drafts_by_entry.get(str(entry["id"]))
         hydrated = dict(plan)
         hydrated["items"] = [dict(item) for item in items]
-        hydrated["calendar_entries"] = [dict(entry) for entry in calendar_entries]
+        hydrated["calendar_entries"] = entry_rows
         return hydrated
+
+    def _get_calendar_entry_for_content_draft(
+        self,
+        *,
+        tenant_id: str,
+        entry_id: str,
+        for_update: bool,
+    ) -> dict[str, Any] | None:
+        lock_clause = "FOR UPDATE OF entry" if for_update else ""
+        row = self.db.execute(
+            text(
+                f"""
+                SELECT entry.*
+                FROM social_content_calendar_entries AS entry
+                JOIN social_action_plans AS plan
+                  ON plan.id = entry.action_plan_id
+                 AND plan.tenant_id = entry.tenant_id
+                WHERE entry.tenant_id = :tenant_id
+                  AND entry.id = :entry_id
+                  AND entry.status <> 'archived'
+                  AND plan.status = 'active'
+                {lock_clause}
+                """
+            ),
+            {"tenant_id": tenant_id, "entry_id": entry_id},
+        ).mappings().first()
+        return dict(row) if row else None
 
     def _get_reference(
         self,
@@ -4419,6 +4702,167 @@ def _build_social_calendar_entries(
             }
         )
     return entries
+
+
+def _build_social_content_draft_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    content_format = _text_value(entry.get("format"), "REEL").upper()
+    channel = _text_value(entry.get("channel"), "instagram").lower()
+    title = _clamped_text(entry.get("title"), "Rascunho de conteudo", limit=220)
+    angle = _clamped_text(entry.get("theme"), title, limit=900)
+    hook = _clamped_text(entry.get("hook"), angle, limit=900)
+    evidence = _clamped_text(
+        entry.get("evidence"),
+        "Evidencia vinculada ao diagnostico e ao calendario.",
+        limit=900,
+    )
+    objective = _clamped_text(
+        entry.get("objective"),
+        "Medir interacoes qualificadas e resposta do publico.",
+        limit=900,
+    )
+    cta = _clamped_text(
+        entry.get("cta"),
+        "Comente com uma duvida especifica ou salve para aplicar depois.",
+        limit=700,
+    )
+    caption_outline = _clamped_text(entry.get("caption_outline"), hook, limit=1300)
+    reference = _text_value(entry.get("source_reference_handle"), "")
+    reference_line = f"\n\nReferencia usada: @{reference}." if reference else ""
+    caption = _clamped_text(
+        f"{hook}\n\n{caption_outline}\n\n{cta}{reference_line}",
+        caption_outline,
+        limit=3800,
+    )
+    visual_direction = _visual_direction_for_format(content_format, evidence=evidence)
+
+    return {
+        "format": content_format,
+        "channel": channel,
+        "title": title,
+        "angle": angle,
+        "hook": hook,
+        "caption": caption,
+        "cta": cta,
+        "visual_direction": visual_direction,
+        "script_json": _script_blocks_for_format(
+            content_format,
+            title=title,
+            hook=hook,
+            evidence=evidence,
+            objective=objective,
+            cta=cta,
+        ),
+        "production_checklist_json": _production_checklist_for_format(content_format),
+        "evidence_json": {
+            "calendar_entry_id": str(entry.get("id")),
+            "action_plan_id": str(entry.get("action_plan_id")),
+            "action_item_id": str(entry.get("action_item_id"))
+            if entry.get("action_item_id")
+            else None,
+            "source_reference_handle": reference or None,
+            "evidence": evidence,
+            "objective": objective,
+            "metrics_goal": _dict_value(entry.get("metrics_goal_json")),
+            "truth_rule": (
+                "Rascunho gerado somente a partir da pauta aprovada e dos dados "
+                "do diagnostico."
+            ),
+        },
+        "metadata_json": {
+            "generated_by": "labby_social_content_draft_v1",
+            "manual_edits_allowed": True,
+            "calendar_day_index": _int_value(entry.get("day_index")),
+            "calendar_status": entry.get("status"),
+        },
+    }
+
+
+def _script_blocks_for_format(
+    content_format: str,
+    *,
+    title: str,
+    hook: str,
+    evidence: str,
+    objective: str,
+    cta: str,
+) -> list[dict[str, str]]:
+    if content_format in {"REEL", "VIDEO"}:
+        return [
+            {
+                "label": "Abertura 0-3s",
+                "instruction": f"Comece com a tensao principal: {hook}",
+            },
+            {
+                "label": "Contexto 3-10s",
+                "instruction": f"Explique por que isso importa usando a pauta: {title}",
+            },
+            {
+                "label": "Prova 10-25s",
+                "instruction": f"Traga evidencia concreta sem inventar dado: {evidence}",
+            },
+            {
+                "label": "Fechamento",
+                "instruction": f"Amarre no objetivo ({objective}) e finalize com CTA: {cta}",
+            },
+        ]
+    if content_format == "CAROUSEL":
+        return [
+            {"label": "Slide 1", "instruction": f"Capa com promessa direta: {hook}"},
+            {"label": "Slide 2", "instruction": f"Problema ou contexto: {title}"},
+            {"label": "Slide 3", "instruction": f"Evidencia real usada: {evidence}"},
+            {"label": "Slide 4", "instruction": "Quebre o aprendizado em um passo pratico."},
+            {"label": "Slide 5", "instruction": "Mostre um exemplo aplicavel ao publico."},
+            {"label": "Slide 6", "instruction": f"Conecte ao objetivo: {objective}"},
+            {"label": "Slide 7", "instruction": f"Feche com CTA: {cta}"},
+        ]
+    if content_format == "STORY":
+        return [
+            {"label": "Story 1", "instruction": f"Abra com pergunta ou conflito: {hook}"},
+            {"label": "Story 2", "instruction": f"Mostre a evidencia: {evidence}"},
+            {"label": "Story 3", "instruction": f"Explique a acao esperada: {objective}"},
+            {"label": "Story 4", "instruction": f"Use sticker/enquete e CTA: {cta}"},
+        ]
+    return [
+        {"label": "Linha editorial", "instruction": title},
+        {"label": "Gancho", "instruction": hook},
+        {"label": "Evidencia", "instruction": evidence},
+        {"label": "CTA", "instruction": cta},
+    ]
+
+
+def _production_checklist_for_format(content_format: str) -> list[dict[str, Any]]:
+    base = [
+        {"label": "Confirmar promessa e publico-alvo antes de produzir", "done": False},
+        {"label": "Usar somente evidencias reais do diagnostico", "done": False},
+        {"label": "Incluir CTA mensuravel", "done": False},
+        {"label": "Revisar legenda, capa e primeiro frame antes de publicar", "done": False},
+    ]
+    if content_format in {"REEL", "VIDEO"}:
+        base.insert(2, {"label": "Gravar abertura forte nos primeiros 3 segundos", "done": False})
+    elif content_format == "CAROUSEL":
+        base.insert(2, {"label": "Validar capa e sequencia de slides no mobile", "done": False})
+    elif content_format == "STORY":
+        base.insert(2, {"label": "Adicionar sticker de resposta, enquete ou link", "done": False})
+    return base
+
+
+def _visual_direction_for_format(content_format: str, *, evidence: str) -> str:
+    if content_format in {"REEL", "VIDEO"}:
+        return (
+            "Video vertical 9:16 com rosto ou tela em destaque, cortes curtos, legenda "
+            f"que reforce a evidencia: {evidence}"
+        )
+    if content_format == "CAROUSEL":
+        return (
+            "Carrossel com capa objetiva, uma ideia por slide, contraste alto e rodape "
+            "com progresso para facilitar leitura."
+        )
+    if content_format == "STORY":
+        return (
+            "Sequencia vertical curta com texto grande, fundo limpo e interacao nativa "
+            "para coletar resposta."
+        )
+    return "Imagem limpa com hierarquia forte, texto curto e prova visual quando houver."
 
 
 def _top_count_key(values: dict[str, int]) -> str | None:
