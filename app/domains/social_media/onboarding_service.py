@@ -1671,6 +1671,10 @@ class SocialOnboardingService:
                         CAST(:production_checklist_json AS jsonb),
                         draft.production_checklist_json
                     ),
+                    is_current = CASE
+                        WHEN :status = 'archived' THEN FALSE
+                        ELSE draft.is_current
+                    END,
                     updated_by_membership_id = :membership_id,
                     updated_at = NOW()
                 FROM social_content_calendar_entries AS entry

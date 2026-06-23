@@ -85,8 +85,8 @@ class SocialContentDraftPatch(BaseModel):
     caption: str | None = Field(default=None, max_length=4000)
     cta: str | None = Field(default=None, max_length=1000)
     visual_direction: str | None = Field(default=None, max_length=2000)
-    script_json: list[dict[str, Any]] | None = None
-    production_checklist_json: list[dict[str, Any]] | None = None
+    script_json: list[dict[str, Any]] | None = Field(default=None, max_length=12)
+    production_checklist_json: list[dict[str, Any]] | None = Field(default=None, max_length=20)
 
 
 class SocialOnboardingPhylloCompleteRequest(BaseModel):

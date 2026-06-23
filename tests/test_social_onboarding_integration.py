@@ -30,6 +30,99 @@ def make_service(db_session: Session) -> SocialOnboardingService:
     return SocialOnboardingService(db_session, job_queue=JobQueueService(db_session))
 
 
+def seed_social_calendar_entry(
+    db_session: Session,
+    service: SocialOnboardingService,
+) -> dict[str, Any]:
+    session = service.create_session(current=current_one(), objective="content_ops")
+    plan_id = db_session.execute(
+        text(
+            """
+            INSERT INTO social_action_plans (
+                tenant_id,
+                onboarding_session_id,
+                created_by_membership_id,
+                updated_by_membership_id,
+                title,
+                summary,
+                status,
+                source_analysis_version,
+                source_specialist_version,
+                plan_version
+            )
+            VALUES (
+                :tenant_id,
+                :session_id,
+                :membership_id,
+                :membership_id,
+                'Plano de teste',
+                'Plano gerado para testes de calendario',
+                'active',
+                1,
+                'test',
+                1
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "tenant_id": TENANT_1,
+            "session_id": session["id"],
+            "membership_id": current_one().membership_id,
+        },
+    ).scalar_one()
+    entry_id = db_session.execute(
+        text(
+            """
+            INSERT INTO social_content_calendar_entries (
+                tenant_id,
+                action_plan_id,
+                onboarding_session_id,
+                scheduled_at,
+                day_index,
+                title,
+                format,
+                channel,
+                status,
+                theme,
+                hook,
+                caption_outline,
+                cta,
+                evidence,
+                objective,
+                source_reference_handle
+            )
+            VALUES (
+                :tenant_id,
+                :plan_id,
+                :session_id,
+                NOW() + INTERVAL '1 day',
+                1,
+                'Dia 1: roteiro de teste',
+                'REEL',
+                'instagram',
+                'planned',
+                'Prova social',
+                'Abrir com resultado concreto',
+                'Legenda com historia curta',
+                'Comente a palavra plano',
+                'Top contents reais do diagnostico',
+                'Medir salvamentos e comentarios',
+                '@referencia'
+            )
+            RETURNING id
+            """
+        ),
+        {
+            "tenant_id": TENANT_1,
+            "plan_id": plan_id,
+            "session_id": session["id"],
+        },
+    ).scalar_one()
+    db_session.commit()
+    return {"session_id": session["id"], "plan_id": plan_id, "entry_id": entry_id}
+
+
 class FakePhylloClient:
     def __init__(self) -> None:
         self.users_by_external_id: dict[str, dict[str, Any]] = {}
@@ -2281,3 +2374,93 @@ def test_social_onboarding_worker_does_not_flip_failed_session_to_ready(
     failed = service.get_session(current=current_one(), session_id=str(session["id"]))
     assert failed["status"] == "failed"
     assert failed["error_code"] == "analysis_abandoned"
+
+
+def test_social_content_draft_generation_keeps_single_current_real_postgres(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    seeded = seed_social_calendar_entry(db_session, service)
+
+    first = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+    second = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+
+    rows = db_session.execute(
+        text(
+            """
+            SELECT draft_version, is_current
+            FROM social_content_drafts
+            WHERE tenant_id = :tenant_id
+              AND calendar_entry_id = :entry_id
+            ORDER BY draft_version
+            """
+        ),
+        {"tenant_id": TENANT_1, "entry_id": seeded["entry_id"]},
+    ).mappings().all()
+
+    assert first["draft_version"] == 1
+    assert second["draft_version"] == 2
+    assert [(row["draft_version"], row["is_current"]) for row in rows] == [
+        (1, False),
+        (2, True),
+    ]
+
+
+def test_social_content_draft_archive_releases_current_slot_real_postgres(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    seeded = seed_social_calendar_entry(db_session, service)
+    draft = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+
+    archived = service.update_content_draft(
+        current=current_one(),
+        draft_id=str(draft["id"]),
+        patch={"status": "archived"},
+    )
+
+    assert archived["status"] == "archived"
+    assert archived["is_current"] is False
+    with pytest.raises(HTTPException) as exc_info:
+        service.get_current_content_draft(
+            current=current_one(),
+            entry_id=str(seeded["entry_id"]),
+        )
+    assert exc_info.value.status_code == 404
+
+    next_draft = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+
+    assert next_draft["draft_version"] == 2
+    assert next_draft["is_current"] is True
+
+
+def test_social_content_draft_update_rejects_cross_tenant_real_postgres(
+    db_session: Session,
+) -> None:
+    service = make_service(db_session)
+    seeded = seed_social_calendar_entry(db_session, service)
+    draft = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.update_content_draft(
+            current=current_two(),
+            draft_id=str(draft["id"]),
+            patch={"title": "Tentativa de outro tenant"},
+        )
+
+    assert exc_info.value.status_code == 404

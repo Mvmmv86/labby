@@ -731,3 +731,15 @@ def test_update_content_draft_contract() -> None:
             "caption": "Legenda ajustada manualmente",
         },
     }
+
+
+def test_update_content_draft_rejects_oversized_structured_payload() -> None:
+    client, service = make_client()
+
+    response = client.patch(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/drafts/{DRAFT_ID}",
+        json={"script_json": [{"label": f"Bloco {index}"} for index in range(13)]},
+    )
+
+    assert response.status_code == 422
+    assert service.connected_payload is None
