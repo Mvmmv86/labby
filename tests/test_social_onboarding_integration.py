@@ -2464,3 +2464,115 @@ def test_social_content_draft_update_rejects_cross_tenant_real_postgres(
         )
 
     assert exc_info.value.status_code == 404
+
+
+def test_social_content_production_budget_blocks_new_paid_job_real_postgres(
+    db_session: Session,
+) -> None:
+    limiter = FakeRateLimiter(allowed=False)
+    service = SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        rate_limiter=limiter,
+    )
+    seeded = seed_social_calendar_entry(db_session, service)
+    draft = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+    approved = service.update_content_draft(
+        current=current_one(),
+        draft_id=str(draft["id"]),
+        patch={"status": "approved"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        service.request_content_production(
+            current=current_one(),
+            draft_id=str(approved["id"]),
+        )
+
+    assert exc_info.value.status_code == 429
+    assert len(limiter.calls) == 1
+    assert limiter.calls[0]["key"].startswith(f"social-content-production:{TENANT_1}:")
+    assert limiter.calls[0]["limit"] == 100
+    assert limiter.calls[0]["window_seconds"] == 60 * 60 * 24
+
+    row = db_session.execute(
+        text(
+            """
+            SELECT production_status, production_version
+            FROM social_content_drafts
+            WHERE tenant_id = :tenant_id
+              AND id = :draft_id
+            """
+        ),
+        {"tenant_id": TENANT_1, "draft_id": approved["id"]},
+    ).mappings().one()
+    assert row["production_status"] == "not_started"
+    assert row["production_version"] == 0
+
+    job_count = db_session.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM jobs
+            WHERE tenant_id = :tenant_id
+              AND job_type = 'social.content.produce'
+            """
+        ),
+        {"tenant_id": TENANT_1},
+    ).scalar_one()
+    assert job_count == 0
+
+
+def test_social_content_production_ready_cache_does_not_consume_budget_real_postgres(
+    db_session: Session,
+) -> None:
+    limiter = FakeRateLimiter(allowed=True)
+    service = SocialOnboardingService(
+        db_session,
+        job_queue=JobQueueService(db_session),
+        rate_limiter=limiter,
+    )
+    seeded = seed_social_calendar_entry(db_session, service)
+    draft = service.generate_content_draft(
+        current=current_one(),
+        entry_id=str(seeded["entry_id"]),
+    )
+    approved = service.update_content_draft(
+        current=current_one(),
+        draft_id=str(draft["id"]),
+        patch={"status": "approved"},
+    )
+    queued = service.request_content_production(
+        current=current_one(),
+        draft_id=str(approved["id"]),
+    )
+    assert queued["production_status"] == "queued"
+    assert len(limiter.calls) == 1
+
+    db_session.execute(
+        text(
+            """
+            UPDATE social_content_drafts
+            SET production_status = 'ready',
+                production_payload_json = '{"final_caption":"ok"}'::jsonb,
+                production_completed_at = NOW()
+            WHERE tenant_id = :tenant_id
+              AND id = :draft_id
+            """
+        ),
+        {"tenant_id": TENANT_1, "draft_id": approved["id"]},
+    )
+    db_session.commit()
+
+    limiter.allowed = False
+    limiter.calls.clear()
+    cached = service.request_content_production(
+        current=current_one(),
+        draft_id=str(approved["id"]),
+    )
+
+    assert cached["production_status"] == "ready"
+    assert limiter.calls == []

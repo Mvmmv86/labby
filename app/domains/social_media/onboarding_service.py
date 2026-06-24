@@ -1747,6 +1747,12 @@ class SocialOnboardingService:
             self.db.commit()
             return row
 
+        try:
+            self._enforce_content_production_budget(tenant_id=str(current.tenant_id))
+        except HTTPException:
+            self.db.rollback()
+            raise
+
         next_version = int(row.get("production_version") or 0) + 1
         updated = self.db.execute(
             text(
@@ -3257,6 +3263,30 @@ class SocialOnboardingService:
             raise HTTPException(
                 status_code=429,
                 detail="Limite diario de analises especialistas atingido",
+                headers={"Retry-After": str(decision.retry_after_seconds)},
+            )
+
+    def _enforce_content_production_budget(self, *, tenant_id: str) -> None:
+        day = datetime.now(UTC).strftime("%Y%m%d")
+        limiter = self._public_reference_rate_limiter()
+        if limiter is None:
+            return
+        key = f"social-content-production:{tenant_id}:{day}"
+        try:
+            decision = limiter.check(
+                key=key,
+                limit=self.settings.social_content_production_limit_per_day,
+                window_seconds=60 * 60 * 24,
+            )
+        except RateLimitUnavailable as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Limitador de custo indisponivel",
+            ) from exc
+        if not decision.allowed:
+            raise HTTPException(
+                status_code=429,
+                detail="Limite diario de producoes de conteudo atingido",
                 headers={"Retry-After": str(decision.retry_after_seconds)},
             )
 

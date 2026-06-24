@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     social_onboarding_reconciler_batch_size: int = 100
     social_onboarding_reconciler_interval_seconds: int = 300
     social_specialist_analysis_limit_per_day: int = Field(default=20, ge=1)
+    social_content_production_limit_per_day: int = Field(default=100, ge=1)
     social_onboarding_max_public_references_per_session: int = Field(default=3, ge=1)
     social_onboarding_reference_diagnostic_debounce_seconds: int = Field(
         default=300, ge=0
