@@ -151,6 +151,18 @@ class SocialContentDraftResponse(BaseModel):
     evidence_json: dict[str, Any] | None = None
     metadata_json: dict[str, Any] | None = None
     is_current: bool
+    production_status: str
+    production_version: int
+    production_payload_json: dict[str, Any]
+    production_error_code: str | None = None
+    production_error_message: str | None = None
+    production_provider: str | None = None
+    production_model: str | None = None
+    production_input_tokens: int | None = None
+    production_output_tokens: int | None = None
+    production_cost_usd: float = 0
+    production_started_at: datetime | None = None
+    production_completed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

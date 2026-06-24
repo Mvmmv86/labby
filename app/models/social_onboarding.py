@@ -670,6 +670,14 @@ class SocialContentDraft(Base):
             "draft_version > 0",
             name="ck_social_content_drafts_version_positive",
         ),
+        CheckConstraint(
+            "production_status IN ('not_started', 'queued', 'running', 'ready', 'failed')",
+            name="ck_social_content_drafts_production_status",
+        ),
+        CheckConstraint(
+            "production_version >= 0",
+            name="ck_social_content_drafts_production_version_nonnegative",
+        ),
         UniqueConstraint(
             "tenant_id",
             "calendar_entry_id",
@@ -693,6 +701,12 @@ class SocialContentDraft(Base):
             "ix_social_content_drafts_tenant_status_updated",
             "tenant_id",
             "status",
+            "updated_at",
+        ),
+        Index(
+            "ix_social_content_drafts_tenant_production_status",
+            "tenant_id",
+            "production_status",
             "updated_at",
         ),
     )
@@ -743,6 +757,22 @@ class SocialContentDraft(Base):
         JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
     is_current: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    production_status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="not_started"
+    )
+    production_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    production_payload_json: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'{}'::jsonb")
+    )
+    production_error_code: Mapped[str | None] = mapped_column(String(120))
+    production_error_message: Mapped[str | None] = mapped_column(Text)
+    production_provider: Mapped[str | None] = mapped_column(String(80))
+    production_model: Mapped[str | None] = mapped_column(String(120))
+    production_input_tokens: Mapped[int | None] = mapped_column(Integer)
+    production_output_tokens: Mapped[int | None] = mapped_column(Integer)
+    production_cost_usd: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False, default=0)
+    production_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    production_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

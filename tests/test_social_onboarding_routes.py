@@ -215,6 +215,16 @@ class FakeSocialOnboardingService:
         self.connected_payload = {"draft_id": draft_id, "patch": patch}
         return make_content_draft_row(id=UUID(str(draft_id)), **patch)
 
+    def request_content_production(self, *, current, draft_id):
+        self.current = current
+        self.connected_payload = {"draft_id": draft_id}
+        return make_content_draft_row(
+            id=UUID(str(draft_id)),
+            status="approved",
+            production_status="queued",
+            production_version=1,
+        )
+
 
 def make_current(modules: tuple[str, ...] = ("social_media",)) -> CurrentMembership:
     return CurrentMembership(
@@ -300,6 +310,18 @@ def make_content_draft_row(**overrides):
         "evidence_json": {"source_reference_handle": "referencia"},
         "metadata_json": {"generated_by": "test"},
         "is_current": True,
+        "production_status": "not_started",
+        "production_version": 0,
+        "production_payload_json": {},
+        "production_error_code": None,
+        "production_error_message": None,
+        "production_provider": None,
+        "production_model": None,
+        "production_input_tokens": None,
+        "production_output_tokens": None,
+        "production_cost_usd": 0,
+        "production_started_at": None,
+        "production_completed_at": None,
         "created_at": now,
         "updated_at": now,
     }
@@ -731,6 +753,23 @@ def test_update_content_draft_contract() -> None:
             "caption": "Legenda ajustada manualmente",
         },
     }
+
+
+def test_request_content_production_contract() -> None:
+    client, service = make_client()
+
+    response = client.post(
+        f"/api/v2/labby/social/onboarding/action-plan/calendar/drafts/{DRAFT_ID}/production"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == str(DRAFT_ID)
+    assert body["status"] == "approved"
+    assert body["production_status"] == "queued"
+    assert body["production_version"] == 1
+    assert body["production_payload_json"] == {}
+    assert service.connected_payload == {"draft_id": str(DRAFT_ID)}
 
 
 def test_update_content_draft_rejects_oversized_structured_payload() -> None:

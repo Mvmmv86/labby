@@ -335,6 +335,20 @@ def update_content_draft(
     )
 
 
+@router.post(
+    "/action-plan/calendar/drafts/{draft_id}/production",
+    response_model=SocialContentDraftResponse,
+)
+def request_content_production(
+    draft_id: UUID,
+    current: CurrentMembership = Depends(require_social_module),
+    service: SocialOnboardingService = Depends(get_social_onboarding_service),
+) -> SocialContentDraftResponse:
+    return _content_draft_response(
+        service.request_content_production(current=current, draft_id=str(draft_id))
+    )
+
+
 def _session_response(row: dict) -> SocialOnboardingSessionResponse:
     return SocialOnboardingSessionResponse(
         id=row["id"],
@@ -469,6 +483,18 @@ def _content_draft_response(row: dict) -> SocialContentDraftResponse:
         evidence_json=row.get("evidence_json"),
         metadata_json=row.get("metadata_json"),
         is_current=bool(row.get("is_current")),
+        production_status=row.get("production_status") or "not_started",
+        production_version=int(row.get("production_version") or 0),
+        production_payload_json=dict(row.get("production_payload_json") or {}),
+        production_error_code=row.get("production_error_code"),
+        production_error_message=row.get("production_error_message"),
+        production_provider=row.get("production_provider"),
+        production_model=row.get("production_model"),
+        production_input_tokens=row.get("production_input_tokens"),
+        production_output_tokens=row.get("production_output_tokens"),
+        production_cost_usd=float(row.get("production_cost_usd") or 0),
+        production_started_at=row.get("production_started_at"),
+        production_completed_at=row.get("production_completed_at"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )

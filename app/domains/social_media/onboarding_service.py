@@ -17,7 +17,9 @@ from app.core.rate_limit import (
 )
 from app.domains.jobs.job_service import JobQueueService, JobRecord
 from app.integrations.ai import (
+    SOCIAL_CONTENT_PRODUCTION_VERSION,
     SOCIAL_SPECIALIST_ANALYSIS_VERSION,
+    make_ai_content_production_client,
     make_ai_specialist_analysis_client,
 )
 from app.integrations.apify import (
@@ -33,6 +35,7 @@ from app.integrations.phyllo import (
 
 SOCIAL_ONBOARDING_DIAGNOSE_JOB = "social.onboarding.diagnose"
 SOCIAL_ONBOARDING_SPECIALIST_JOB = "social.onboarding.specialist_analysis"
+SOCIAL_CONTENT_PRODUCTION_JOB = "social.content.produce"
 SOCIAL_REFERENCE_SYNC_JOB = "social.references.sync"
 SOCIAL_ONBOARDING_QUEUE = "worker-social-analysis"
 PHYLLO_CONNECT_TIMEOUT_MINUTES = 30
@@ -58,6 +61,7 @@ class SocialOnboardingService:
         phyllo_client: Any | None = None,
         apify_client: Any | None = None,
         specialist_ai_client: Any | None = None,
+        content_ai_client: Any | None = None,
         rate_limiter: PublicRateLimiter | None = None,
     ) -> None:
         self.db = db
@@ -66,6 +70,7 @@ class SocialOnboardingService:
         self.phyllo_client = phyllo_client or PhylloClient(self.settings)
         self.apify_client = apify_client or ApifyClient(self.settings)
         self.specialist_ai_client = specialist_ai_client
+        self.content_ai_client = content_ai_client
         self.rate_limiter = rate_limiter
 
     def get_current(self, *, current: CurrentMembership) -> dict[str, Any] | None:
@@ -1717,6 +1722,282 @@ class SocialOnboardingService:
             raise HTTPException(status_code=404, detail="Rascunho de conteudo nao encontrado")
         self.db.commit()
         return dict(row)
+
+    def request_content_production(
+        self,
+        *,
+        current: CurrentMembership,
+        draft_id: str,
+    ) -> dict[str, Any]:
+        row = self._get_content_draft_for_production(
+            tenant_id=str(current.tenant_id),
+            draft_id=draft_id,
+            for_update=True,
+        )
+        if row is None:
+            self.db.rollback()
+            raise HTTPException(status_code=404, detail="Rascunho de conteudo nao encontrado")
+        if row["status"] != "approved":
+            self.db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="Aprove o roteiro antes de produzir a peca final",
+            )
+        if row["production_status"] in {"queued", "running", "ready"}:
+            self.db.commit()
+            return row
+
+        next_version = int(row.get("production_version") or 0) + 1
+        updated = self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts
+                SET production_status = 'queued',
+                    production_version = :production_version,
+                    production_payload_json = '{}'::jsonb,
+                    production_error_code = NULL,
+                    production_error_message = NULL,
+                    production_provider = NULL,
+                    production_model = NULL,
+                    production_input_tokens = NULL,
+                    production_output_tokens = NULL,
+                    production_cost_usd = 0,
+                    production_started_at = NULL,
+                    production_completed_at = NULL,
+                    updated_by_membership_id = :membership_id,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :draft_id
+                  AND is_current = TRUE
+                  AND status = 'approved'
+                  AND production_status IN ('not_started', 'failed')
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": str(current.tenant_id),
+                "draft_id": draft_id,
+                "membership_id": str(current.membership_id),
+                "production_version": next_version,
+            },
+        ).mappings().first()
+        if updated is None:
+            self.db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="A producao desta peca ja foi processada",
+            )
+
+        self.job_queue.enqueue_job(
+            tenant_id=str(current.tenant_id),
+            membership_id=str(current.membership_id),
+            job_type=SOCIAL_CONTENT_PRODUCTION_JOB,
+            queue_name=SOCIAL_ONBOARDING_QUEUE,
+            idempotency_key=f"social.content.produce:{draft_id}:v{next_version}",
+            payload={
+                "draft_id": draft_id,
+                "production_version": next_version,
+            },
+            max_attempts=1,
+            commit=False,
+        )
+        self.db.commit()
+        return dict(updated)
+
+    def run_content_production(
+        self,
+        *,
+        tenant_id: str,
+        draft_id: str,
+        production_version: int,
+    ) -> dict[str, Any]:
+        row = self._get_content_draft_for_production(
+            tenant_id=tenant_id,
+            draft_id=draft_id,
+            for_update=True,
+        )
+        if row is None:
+            raise ValueError("Rascunho de conteudo nao encontrado")
+        if int(row.get("production_version") or 0) != production_version:
+            self.db.rollback()
+            return {"status": "skipped", "reason": "stale_production_version"}
+        if row["production_status"] == "ready":
+            self.db.rollback()
+            return {"status": "skipped", "reason": "already_ready"}
+        if row["production_status"] != "queued":
+            self.db.rollback()
+            return {"status": "skipped", "reason": "not_queued"}
+
+        self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts
+                SET production_status = 'running',
+                    production_started_at = NOW(),
+                    production_error_code = NULL,
+                    production_error_message = NULL,
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :draft_id
+                  AND production_version = :production_version
+                  AND production_status = 'queued'
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "draft_id": draft_id,
+                "production_version": production_version,
+            },
+        )
+        self.db.commit()
+
+        production_input = _build_content_production_input(
+            row=row,
+            production_version=production_version,
+        )
+        client = self.content_ai_client or make_ai_content_production_client(self.settings)
+        result = client.generate_social_content_production(
+            production_input=production_input,
+        )
+
+        current = self._get_content_draft_for_production(
+            tenant_id=tenant_id,
+            draft_id=draft_id,
+            for_update=True,
+        )
+        if current is None:
+            raise ValueError("Rascunho de conteudo nao encontrado")
+        if int(current.get("production_version") or 0) != production_version:
+            self.db.rollback()
+            return {"status": "skipped", "reason": "stale_after_ai"}
+        if current["production_status"] != "running":
+            self.db.rollback()
+            return {"status": "skipped", "reason": "not_running"}
+
+        updated = self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts
+                SET production_status = 'ready',
+                    production_payload_json = CAST(:payload AS jsonb),
+                    production_error_code = NULL,
+                    production_error_message = NULL,
+                    production_provider = :provider,
+                    production_model = :model,
+                    production_input_tokens = :input_tokens,
+                    production_output_tokens = :output_tokens,
+                    production_cost_usd = :cost_usd,
+                    production_completed_at = NOW(),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :draft_id
+                  AND production_version = :production_version
+                  AND production_status = 'running'
+                RETURNING *
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "draft_id": draft_id,
+                "production_version": production_version,
+                "payload": json.dumps(result.content),
+                "provider": result.provider,
+                "model": result.model,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost_usd": result.cost_usd,
+            },
+        ).mappings().one()
+        self.db.commit()
+        return {"status": "ready", "draft_id": str(updated["id"])}
+
+    def mark_content_production_failed(
+        self,
+        *,
+        tenant_id: str,
+        draft_id: str,
+        production_version: int,
+        error_code: str,
+        error_message: str,
+    ) -> None:
+        self.db.execute(
+            text(
+                """
+                UPDATE social_content_drafts
+                SET production_status = 'failed',
+                    production_error_code = :error_code,
+                    production_error_message = :error_message,
+                    production_completed_at = NOW(),
+                    updated_at = NOW()
+                WHERE tenant_id = :tenant_id
+                  AND id = :draft_id
+                  AND production_version = :production_version
+                  AND production_status IN ('queued', 'running')
+                """
+            ),
+            {
+                "tenant_id": tenant_id,
+                "draft_id": draft_id,
+                "production_version": production_version,
+                "error_code": _clamped_text(error_code, "AIError", limit=120),
+                "error_message": _clamped_text(error_message, "Falha na IA", limit=1000),
+            },
+        )
+        self.db.commit()
+
+    def _get_content_draft_for_production(
+        self,
+        *,
+        tenant_id: str,
+        draft_id: str,
+        for_update: bool = False,
+    ) -> dict[str, Any] | None:
+        lock_clause = "FOR UPDATE OF draft" if for_update else ""
+        row = self.db.execute(
+            text(
+                f"""
+                SELECT
+                    draft.*,
+                    entry.scheduled_at AS entry_scheduled_at,
+                    entry.day_index AS entry_day_index,
+                    entry.theme AS entry_theme,
+                    entry.hook AS entry_hook,
+                    entry.caption_outline AS entry_caption_outline,
+                    entry.cta AS entry_cta,
+                    entry.evidence AS entry_evidence,
+                    entry.objective AS entry_objective,
+                    entry.source_reference_handle AS entry_source_reference_handle,
+                    entry.metrics_goal_json AS entry_metrics_goal_json,
+                    session.objective AS session_objective,
+                    session.connected_account_handle AS session_connected_account_handle,
+                    session.connected_account_name AS session_connected_account_name,
+                    session.profile_url AS session_profile_url,
+                    session.profile_snapshot AS session_profile_snapshot,
+                    session.analysis_report AS session_analysis_report,
+                    session.analysis_version AS session_analysis_version
+                FROM social_content_drafts AS draft
+                JOIN social_content_calendar_entries AS entry
+                  ON entry.id = draft.calendar_entry_id
+                 AND entry.tenant_id = draft.tenant_id
+                JOIN social_action_plans AS plan
+                  ON plan.id = draft.action_plan_id
+                 AND plan.tenant_id = draft.tenant_id
+                JOIN social_onboarding_sessions AS session
+                  ON session.id = draft.onboarding_session_id
+                 AND session.tenant_id = draft.tenant_id
+                WHERE draft.tenant_id = :tenant_id
+                  AND draft.id = :draft_id
+                  AND draft.is_current = TRUE
+                  AND draft.status <> 'archived'
+                  AND entry.status <> 'archived'
+                  AND plan.status = 'active'
+                  AND session.status = 'ready'
+                {lock_clause}
+                """
+            ),
+            {"tenant_id": tenant_id, "draft_id": draft_id},
+        ).mappings().first()
+        return dict(row) if row else None
 
     def _refresh_ready_report_if_benchmark_stale(self, *, row: dict[str, Any]) -> dict[str, Any]:
         current_report = dict(row.get("analysis_report") or {})
@@ -4778,6 +5059,117 @@ def _build_social_content_draft_payload(entry: dict[str, Any]) -> dict[str, Any]
             "calendar_day_index": _int_value(entry.get("day_index")),
             "calendar_status": entry.get("status"),
         },
+    }
+
+
+def _build_content_production_input(
+    *,
+    row: dict[str, Any],
+    production_version: int,
+) -> dict[str, Any]:
+    report = _dict_value(row.get("session_analysis_report"))
+    snapshot = _dict_value(row.get("session_profile_snapshot"))
+    content_metrics = _dict_value(report.get("content_metrics"))
+    benchmark = _dict_value(report.get("competitive_benchmark"))
+    connected_profile = _dict_value(benchmark.get("connected_profile"))
+    reference_profiles = _list_value(benchmark.get("reference_profiles"))
+    top_contents = _list_value(report.get("top_contents"))[:8]
+    evidence = _dict_value(row.get("evidence_json"))
+    specialist = _dict_value(report.get("specialist_analysis"))
+    return {
+        "version": "social_content_production_input_v1",
+        "production_version": production_version,
+        "content_version": SOCIAL_CONTENT_PRODUCTION_VERSION,
+        "calendar_entry": {
+            "id": str(row.get("calendar_entry_id")),
+            "scheduled_at": row.get("entry_scheduled_at"),
+            "day_index": _int_value(row.get("entry_day_index")),
+            "title": row.get("title"),
+            "format": row.get("format"),
+            "channel": row.get("channel"),
+            "theme": row.get("entry_theme"),
+            "hook": row.get("entry_hook"),
+            "caption_outline": row.get("entry_caption_outline"),
+            "cta": row.get("entry_cta"),
+            "evidence": row.get("entry_evidence"),
+            "objective": row.get("entry_objective"),
+            "source_reference_handle": row.get("entry_source_reference_handle"),
+            "metrics_goal": _dict_value(row.get("entry_metrics_goal_json")),
+        },
+        "draft": {
+            "id": str(row.get("id")),
+            "draft_version": _int_value(row.get("draft_version")),
+            "status": row.get("status"),
+            "format": row.get("format"),
+            "channel": row.get("channel"),
+            "title": row.get("title"),
+            "angle": row.get("angle"),
+            "hook": row.get("hook"),
+            "caption": row.get("caption"),
+            "cta": row.get("cta"),
+            "visual_direction": row.get("visual_direction"),
+            "script_json": _list_value(row.get("script_json"))[:8],
+            "production_checklist_json": _list_value(row.get("production_checklist_json"))[:10],
+            "evidence_json": evidence,
+        },
+        "connected_profile": {
+            "handle": row.get("session_connected_account_handle")
+            or snapshot.get("handle")
+            or connected_profile.get("handle"),
+            "display_name": row.get("session_connected_account_name")
+            or snapshot.get("display_name")
+            or connected_profile.get("display_name"),
+            "profile_url": row.get("session_profile_url") or snapshot.get("profile_url"),
+            "bio": snapshot.get("bio"),
+            "followers_count": _int_value(
+                snapshot.get("followers_count") or connected_profile.get("followers_count")
+            ),
+            "posts_count": _int_value(
+                snapshot.get("posts_count") or connected_profile.get("posts_count")
+            ),
+            "contents_analyzed": _int_value(
+                snapshot.get("content_items_count") or connected_profile.get("contents_analyzed")
+            ),
+            "content_metrics": content_metrics,
+        },
+        "real_content_evidence": {
+            "top_connected_contents": _compact_connected_contents(top_contents, limit=5),
+            "reference_profiles": [
+                {
+                    "handle": ref.get("handle"),
+                    "display_name": ref.get("display_name"),
+                    "followers_count": ref.get("followers_count"),
+                    "avg_interactions_per_content": ref.get(
+                        "avg_interactions_per_content"
+                    ),
+                    "top_format": ref.get("top_format"),
+                    "top_contents": _compact_public_contents(
+                        _list_value(ref.get("top_contents")),
+                        limit=4,
+                    ),
+                }
+                for ref in reference_profiles[:4]
+                if isinstance(ref, dict)
+            ],
+        },
+        "specialist_analysis": {
+            "executive_summary": specialist.get("executive_summary"),
+            "diagnosis": _list_value(specialist.get("diagnosis"))[:5],
+            "content_patterns": _list_value(specialist.get("content_patterns"))[:5],
+            "benchmark_insights": _list_value(specialist.get("benchmark_insights"))[:5],
+            "opportunities": _list_value(specialist.get("opportunities"))[:5],
+            "truth_blocks": _list_value(specialist.get("truth_blocks"))[:8],
+        },
+        "non_negotiable_rules": [
+            "Escrever a peca final, nao apenas dicas.",
+            "Nao inventar dados, resultados, demografia ou provas.",
+            (
+                "Usar evidencia real de posts conectados ou referencias publicas "
+                "quando citar benchmark."
+            ),
+            "Separar texto final de nota operacional.",
+            "Nao copiar captions de referencias publicas; adaptar mecanismo e explicar o por que.",
+        ],
     }
 
 
